@@ -6,6 +6,7 @@ const canvas = document.getElementById('view');
 const overlay = document.getElementById('startOverlay');
 const startBtn = document.getElementById('startBtn');
 const flipBtn = document.getElementById('flipBtn');
+const resetBtn = document.getElementById('resetBtn');
 const tiltInfo = document.getElementById('tiltInfo');
 
 const renderer = new Renderer(canvas);
@@ -65,6 +66,9 @@ startBtn.addEventListener('click', async () => {
 });
 
 flipBtn.addEventListener('click', () => orient.flip());
+
+// regenerate the stage (new random layout) and re-pool the liquid
+resetBtn.addEventListener('click', () => fluid.resize(window.innerWidth, window.innerHeight));
 
 // double-tap anywhere on the canvas flips the container
 let lastTap = 0;

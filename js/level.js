@@ -1,90 +1,144 @@
-// Level geometry: static obstacle segments in normalized (0..1) coordinates.
-// x is normalized by width, y by height. Scaled to pixels via build().
-// Layout is point-symmetric so it works both ways up (hourglass flip).
-//
-// Top and bottom reservoirs: nearly horizontal trays spanning the width.
-// Each tray has one DRIP nozzle (spout walls pointing out of the reservoir)
-// and one CATCH opening — a plain gap at tray level. The tray itself is the
-// funnel: it slopes so that liquid landing on it slides into the catch gap.
-// No walls rise above the tray (in 2D any raised rim would block liquid
-// arriving along the tray). Back-flow through the catch is prevented by a
-// one-way valve in physics.js, not by geometry. Top drips on the left and
-// catches on the right; the bottom tray is the point-symmetric mirror, so
-// after a 180° flip the bottom-right nozzle drips into the top-right catch.
-// Only the currently-upper reservoir drains (throttled in physics.js).
+// Procedural level geometry, regenerated on every buildLevel() call.
+// The vessel keeps its hourglass structure: a top and bottom reservoir tray,
+// each pierced by plain gaps (pure geometry — no valves or throttling; flow
+// through a gap emerges from gravity, particle repulsion and cohesion alone).
+// Everything below the top tray — cascade ramps (段差), gear wheels (歯車)
+// and seesaws (シーソー) — is randomly generated. The whole layout is
+// point-symmetric ((x,y) → (w-x, h-y)) so it plays the same after a 180° flip.
 
-const NOZZLE_XS = [0.295, 0.705];
-const NOZZLE_HALFW = 0.04;   // half width of drip nozzle gap (normalized by w)
-const TRAY_Y = 0.09;         // top tray plane (bottom tray at 1 - TRAY_Y)
-const SPOUT_LEN = 0.045;     // spout wall length (normalized by h)
-
-const SLOPE = 0.012;         // near-horizontal grade toward the drip nozzle
 const WALL_INSET_FRAC = 0.015; // sealed glass wall thickness (of min(w,h))
-const CATCH_HALFW = NOZZLE_HALFW * 1.5; // catch gap is wider: easy landing
+const TRAY_GRADE = 0.09;       // constant tray grade toward the drip nozzle
 
-const DRIP_X = NOZZLE_XS[0];  // top tray drips on the left...
-const CATCH_X = NOZZLE_XS[1]; // ...and catches on the right
-
-// Top reservoir; the bottom is generated as its point mirror (x,y)→(1-x,1-y).
-const TOP_SEGS = [
-  // nearly flat tray, lowest at the drip gap; the catch-side edges sit at
-  // TRAY_Y - SLOPE so the mirrored (receiving) tray drains into its catch
-  [0.0, TRAY_Y - SLOPE, DRIP_X - NOZZLE_HALFW, TRAY_Y],
-  [DRIP_X + NOZZLE_HALFW, TRAY_Y, CATCH_X - CATCH_HALFW, TRAY_Y - SLOPE],
-  // stub right of the catch: slightly lower at the gap so liquid landing on
-  // it slides into the catch instead of pooling in the wall corner
-  [CATCH_X + CATCH_HALFW, TRAY_Y - SLOPE * 0.5, 1.0, TRAY_Y - SLOPE],
-  // drip spout walls (point down, out of the reservoir)
-  [DRIP_X - NOZZLE_HALFW, TRAY_Y, DRIP_X - NOZZLE_HALFW, TRAY_Y + SPOUT_LEN],
-  [DRIP_X + NOZZLE_HALFW, TRAY_Y, DRIP_X + NOZZLE_HALFW, TRAY_Y + SPOUT_LEN],
-];
-
-const NSEGS = [
-  ...TOP_SEGS,
-  // bottom reservoir: point-symmetric mirror (drips right/up, catches left)
-  ...TOP_SEGS.map(([x1, y1, x2, y2]) => [1 - x1, 1 - y1, 1 - x2, 1 - y2]),
-
-  // --- cascade under the left nozzle (drips zigzag down to the seesaw) ---
-  [0.36, 0.20, 0.14, 0.26],
-  [0.10, 0.34, 0.34, 0.40],
-  [0.30, 0.48, 0.06, 0.54],
-  // point-symmetric mirrors on the right (feed the bottom-right tray)
-  [0.64, 0.80, 0.86, 0.74],
-  [0.90, 0.66, 0.66, 0.60],
-  [0.70, 0.52, 0.94, 0.46],
-];
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
 
 export function buildLevel(w, h) {
-  const segs = NSEGS.map(([x1, y1, x2, y2]) => makeSeg(x1 * w, y1 * h, x2 * w, y2 * h));
+  const m = Math.min(w, h);
+  const r = Math.max(4, m * 0.014); // particle radius (matches physics.js)
+  const segs = [];
+
+  // --- top tray: ONE monotonic incline spanning the full width, with two
+  // nozzle gaps cut into it (bottom tray is the point mirror). ROLES (see
+  // CLAUDE.md): the CATCH nozzle sits near the HIGH end and only receives
+  // the stream falling from the other tray's drip after a flip; the DRIP
+  // nozzle sits near the LOW end and is the only outlet — resting liquid
+  // always slides down the incline away from the catch and out the drip.
+  // The point mirror inverts high/low, so the same tray works in both
+  // orientations. Placing the gaps at xCatch = w - xDrip keeps the bottom
+  // drip in the same column as the top catch for the hourglass loop.
+  const spoutLen = rand(0.035, 0.05) * h;
+  const dripHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
+  const catchHalfW = dripHalfW * 1.4; // wider for an easy landing
+  const highOnLeft = Math.random() < 0.5;
+  // the drip gap runs (almost) flush to the low wall — a ledge between the
+  // gap and the wall would trap liquid, breaking the monotonic drain
+  const sliver = rand(0.5, 1.5) * r;
+  const xDrip = highOnLeft ? w - dripHalfW - sliver : dripHalfW + sliver;
+  const xCatch = w - xDrip; // high side, flush to the opposite wall
+  const yHigh = rand(0.06, 0.09) * h;
+  // cap the total drop so wide (landscape) vessels keep a shallow tray
+  const grade = Math.min(TRAY_GRADE, 0.09 * h / w);
+  const trayAt = x => yHigh + (highOnLeft ? x : w - x) * grade;
+  const gaps = [
+    { x: xDrip, halfW: dripHalfW },
+    { x: xCatch, halfW: catchHalfW },
+  ].sort((a, b) => a.x - b.x);
+
+  const topSegs = [];
+  // collinear tray pieces along the incline, split by the two gaps
+  const edges = [0, ...gaps.flatMap(g => [g.x - g.halfW, g.x + g.halfW]), w];
+  for (let i = 0; i < edges.length; i += 2) {
+    const x1 = edges[i], x2 = edges[i + 1];
+    if (x2 - x1 < 3 * r) continue; // drop wall-side slivers: gap meets wall
+    topSegs.push([x1, trayAt(x1), x2, trayAt(x2)]);
+  }
+  // nozzle walls: ONLY the catch gets walls — two, STANDING INTO the
+  // reservoir — a raised rim that keeps reservoir liquid out of the catch.
+  // The drip has no walls (the incline leads straight into the hole), so
+  // the tray's underside — the receiving face once flipped — is perfectly
+  // smooth and the arriving stream can never snag on its way to the catch.
+  for (const x of [xCatch - catchHalfW, xCatch + catchHalfW]) {
+    if (x <= 0 || x >= w) continue; // outer edge may coincide with the wall
+    topSegs.push([x, trayAt(x), x, trayAt(x) - spoutLen]);
+  }
+  segs.push(...topSegs);
+  // bottom reservoir: point-symmetric mirror
+  segs.push(...topSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
+
+  // --- cascade ramps (段差) in the upper mid band, mirrored below ---
+  const nRamps = randInt(2, 3); // ×2 by mirroring → 4..6 total
+  const yTop = 0.20 * h, yBot = 0.48 * h;
+  const rampSegs = [];
+  for (let i = 0; i < nRamps; i++) {
+    const y = yTop + ((i + rand(0.2, 0.8)) / nRamps) * (yBot - yTop);
+    const len = rand(0.2, 0.34) * w;
+    const x1 = rand(0.06, 0.94 - len / w) * w;
+    const tilt = rand(0.04, 0.08) * h * (i % 2 ? -1 : 1);
+    rampSegs.push([x1, y - tilt / 2, x1 + len, y + tilt / 2]);
+  }
+  segs.push(...rampSegs);
+  segs.push(...rampSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
+
+  const segments = segs.map(([x1, y1, x2, y2]) => makeSeg(x1, y1, x2, y2));
+
+  // --- rotors: 1..2 gear wheels, 1..2 seesaws, placed without overlaps ---
+  const wheels = [], seesaws = [];
+  const placed = []; // {x, y, rad} keep-out circles
+  const clear = (x, y, rad) => {
+    const pad = rad + 3.5 * r;
+    if (x < pad || x > w - pad || y < 0.16 * h + pad || y > 0.84 * h - pad) return false;
+    if (placed.some(o => Math.hypot(o.x - x, o.y - y) < o.rad + pad)) return false;
+    return segments.every(s => segDist(s, x, y) > pad);
+  };
+  const place = (rad, xHint) => {
+    for (let t = 0; t < 80; t++) {
+      const x = xHint !== undefined && t < 30
+        ? xHint + rand(-0.08, 0.08) * w
+        : rand(0.12, 0.88) * w;
+      const y = rand(0.2, 0.8) * h;
+      if (clear(x, y, rad)) {
+        placed.push({ x, y, rad });
+        return { x, y };
+      }
+    }
+    return null;
+  };
+
+  // first wheel aims for the fall path under a top gap
+  const nWheels = randInt(1, 2), nSeesaws = randInt(1, 2);
+  for (let i = 0; i < nWheels; i++) {
+    const rad = rand(0.07, 0.11) * m;
+    const at = place(rad * 1.15, i === 0 ? gaps[0].x : undefined);
+    if (at) wheels.push({ x: at.x, y: at.y, r: rad });
+  }
+  for (let i = 0; i < nSeesaws; i++) {
+    const half = rand(0.10, 0.15) * m;
+    const at = place(half, i === 0 && gaps.length > 1 ? gaps[1].x : undefined);
+    if (at) seesaws.push({ x: at.x, y: at.y, half });
+  }
+
+  // where the liquid may start: the drip side of the catch rim, so nothing
+  // spawns over (or behind) the catch gap
+  const spawnX = highOnLeft
+    ? [xCatch + catchHalfW + 3 * r, 0.95 * w]
+    : [0.05 * w, xCatch - catchHalfW - 3 * r];
+
   return {
-    segments: segs,
-    // gear wheel sits in the right drip/catch column (driven by the rising
-    // stream when flipped); seesaw at its mirror point in the left column,
-    // offset from the drip line so drops strike the rim (max lever arm)
-    wheel: { x: (1 - DRIP_X) * w - Math.min(w, h) * 0.06, y: 0.30 * h, r: Math.min(w, h) * 0.10 },
-    seesaw: { x: DRIP_X * w + Math.min(w, h) * 0.06, y: 0.70 * h, half: Math.min(w, h) * 0.13 },
-    // one-way drip nozzles: dir = +1 drains downward (top reservoir),
-    // dir = -1 drains upward after a flip (bottom reservoir). The catch
-    // openings opposite them are pure geometry — no throttling needed.
-    nozzles: [
-      { x: DRIP_X * w, y: TRAY_Y * h, dir: +1 },
-      { x: (1 - DRIP_X) * w, y: (1 - TRAY_Y) * h, dir: -1 },
-    ],
-    nozzleHalfW: NOZZLE_HALFW * w,
-    nozzleLen: SPOUT_LEN * h,
-    // catch openings: plain gaps at tray level, one-way in physics.js.
-    // dir points INTO the reservoir cavity; the valve plane sits flush with
-    // the adjacent tray edges (TRAY_Y - SLOPE); driftX slides liquid held on
-    // the valve toward the drip nozzle so nothing gets stuck over the gap.
-    catches: [
-      { x: CATCH_X * w, y: (TRAY_Y - SLOPE) * h, dir: -1, driftX: Math.sign(DRIP_X - CATCH_X) },
-      { x: (1 - CATCH_X) * w, y: (1 - TRAY_Y + SLOPE) * h, dir: +1, driftX: Math.sign(CATCH_X - DRIP_X) },
-    ],
-    catchHalfW: CATCH_HALFW * w,
+    segments,
+    wheels,
+    seesaws,
+    spawnX,
     // sealed vessel: glass wall thickness; physics clamps particles inside
     // it and the renderer draws the frame at this width
-    inset: Math.min(w, h) * WALL_INSET_FRAC,
+    inset: m * WALL_INSET_FRAC,
   };
+}
+
+// distance from point to segment
+function segDist(s, x, y) {
+  let t = ((x - s.x1) * s.dx + (y - s.y1) * s.dy) / (s.len * s.len);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(x - (s.x1 + s.dx * t), y - (s.y1 + s.dy * t));
 }
 
 export function makeSeg(x1, y1, x2, y2) {

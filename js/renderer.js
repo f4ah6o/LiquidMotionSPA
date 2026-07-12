@@ -56,8 +56,8 @@ export class Renderer {
     this.drawLiquid(fluid);
 
     this.drawObstacles(fluid);
-    this.drawWheel(fluid.wheel);
-    this.drawSeesaw(fluid.seesaw);
+    for (const wl of fluid.wheels) this.drawWheel(wl);
+    for (const ss of fluid.seesaws) this.drawSeesaw(ss);
 
     // sealed glass frame: a solid wall of `inset` thickness with a bright
     // inner edge — the vessel is closed on all sides
@@ -78,15 +78,16 @@ export class Renderer {
     // brighter, and shifted by a slight parallax
     const sorted = fluid.p.slice().sort((a, b) => a.z - b.z);
     const halfD = fluid.depth / 2;
+    const hue = fluid.hue;
     for (const p of sorted) {
       const zn = p.z / halfD; // -1 (far) .. +1 (near)
       const R = fluid.r * 2.4 * s * (1 + zn * 0.35);
       const alpha = 0.65 + 0.35 * (zn + 1) / 2;
       const x = (p.x + p.z * 0.06) * s, y = p.y * s;
       const g = o.createRadialGradient(x, y, 0, x, y, R);
-      g.addColorStop(0, `hsla(${p.hue}, 95%, 62%, ${0.95 * alpha})`);
-      g.addColorStop(0.65, `hsla(${p.hue}, 95%, 55%, ${0.55 * alpha})`);
-      g.addColorStop(1, `hsla(${p.hue}, 95%, 50%, 0)`);
+      g.addColorStop(0, `hsla(${hue}, 95%, 62%, ${0.95 * alpha})`);
+      g.addColorStop(0.65, `hsla(${hue}, 95%, 55%, ${0.55 * alpha})`);
+      g.addColorStop(1, `hsla(${hue}, 95%, 50%, 0)`);
       o.fillStyle = g;
       o.beginPath();
       o.arc(x, y, R, 0, Math.PI * 2);
