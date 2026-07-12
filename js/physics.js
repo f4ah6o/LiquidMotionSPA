@@ -262,8 +262,10 @@ function collideSegment(particle, segment, radius, rotor, dt) {
   const velocityY = particle.y - particle.py;
   const normalVelocity = velocityX * unitX + velocityY * unitY;
   if (normalVelocity < 0) {
-    particle.px = particle.x - (velocityX - normalVelocity * unitX) * 0.95 + normalVelocity * unitX * 0.25;
-    particle.py = particle.y - (velocityY - normalVelocity * unitY) * 0.95 + normalVelocity * unitY * 0.25;
+    // tangential friction 0.85: beads creep along a step instead of
+    // sliding off — part of the real-toy pacing (PR #4 port)
+    particle.px = particle.x - (velocityX - normalVelocity * unitX) * 0.85 + normalVelocity * unitX * 0.25;
+    particle.py = particle.y - (velocityY - normalVelocity * unitY) * 0.85 + normalVelocity * unitY * 0.25;
     if (rotor) rotor.applyImpulse(particle.x, particle.y, -normalVelocity * unitX, -normalVelocity * unitY);
   }
   if (rotor) {

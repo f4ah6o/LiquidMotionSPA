@@ -3,9 +3,14 @@ const fluid = (hue, overrides = {}) => ({
   label: '主液体',
   hue,
   specificGravity: 1.25,
-  ambientSpecificGravity: 0.44,
-  viscosity: 1,
-  cohesion: 1,
+  // 実物玩具の質感に寄せたチューニング (PR #4 port):
+  // - 浮力比 0.70 (0.875 / 1.25) — 重い周囲媒質の中をビーズがゆっくり降りる
+  // - viscosity 3 — dampingBase が下限 0.2 に張り付く強い抗力
+  //   (旧モデルの DAMP_BASE 0.04 に最も近い表現可能な値)
+  // - cohesion 1.4 — 凝集強化で丸いビーズが保たれる (旧 0.10→0.14 と同じ倍率)
+  ambientSpecificGravity: 0.875,
+  viscosity: 3,
+  cohesion: 1.4,
   particleCount: 170,
   rendering: 'metaball',
   ...overrides,
@@ -19,7 +24,7 @@ export const SCENES = [
     description: '段差を伝って液滴がゆっくり落ちる基本シーン。',
     seed: 'step-drop-v1',
     experimental: false,
-    fluid: fluid(194, { viscosity: 1.15, cohesion: 1.08 }),
+    fluid: fluid(194, { viscosity: 3.45, cohesion: 1.51 }),
     layout: {
       mode: 'fixed',
       highOnLeft: true,
@@ -41,7 +46,7 @@ export const SCENES = [
     description: '2つの歯車が逆方向に連動し、流れを受け渡すシーン。',
     seed: 'gear-flow-v1',
     experimental: false,
-    fluid: fluid(43, { viscosity: 0.92, cohesion: 0.96 }),
+    fluid: fluid(43, { viscosity: 2.76, cohesion: 1.34 }),
     layout: {
       mode: 'fixed',
       highOnLeft: false,
@@ -67,7 +72,7 @@ export const SCENES = [
     description: '流れを左右に分け、接触量で開く弁を通して再合流させるシーン。',
     seed: 'branch-merge-v1',
     experimental: false,
-    fluid: fluid(318, { viscosity: 1.25, cohesion: 1.12, particleCount: 180 }),
+    fluid: fluid(318, { viscosity: 3.75, cohesion: 1.57, particleCount: 180 }),
     layout: {
       mode: 'fixed',
       highOnLeft: true,
