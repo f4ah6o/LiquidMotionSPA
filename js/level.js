@@ -4,40 +4,38 @@
 //
 // Top and bottom reservoirs: nearly horizontal trays spanning the width.
 // Each tray has one DRIP nozzle (spout walls pointing out of the reservoir)
-// and one CATCH opening (funnel flaring toward incoming drops, with lips on
-// the reservoir side so held liquid can't leak back out). Top drips on the
-// left and catches on the right; the bottom tray is the point-symmetric
-// mirror, so after a 180° flip the bottom-right nozzle drips into the
-// top-right catch. Only the currently-upper reservoir drains, and the drip
-// rate is throttled in physics.js.
+// and one CATCH opening — a plain gap at tray level. The tray itself is the
+// funnel: it slopes so that liquid landing on it slides into the catch gap.
+// No walls rise above the tray (in 2D any raised rim would block liquid
+// arriving along the tray). Back-flow through the catch is prevented by a
+// one-way valve in physics.js, not by geometry. Top drips on the left and
+// catches on the right; the bottom tray is the point-symmetric mirror, so
+// after a 180° flip the bottom-right nozzle drips into the top-right catch.
+// Only the currently-upper reservoir drains (throttled in physics.js).
 
 const NOZZLE_XS = [0.295, 0.705];
-const NOZZLE_HALFW = 0.04;   // half width of nozzle gap (normalized by w)
+const NOZZLE_HALFW = 0.04;   // half width of drip nozzle gap (normalized by w)
 const TRAY_Y = 0.09;         // top tray plane (bottom tray at 1 - TRAY_Y)
 const SPOUT_LEN = 0.045;     // spout wall length (normalized by h)
 
 const SLOPE = 0.012;         // near-horizontal grade toward the drip nozzle
-const LIP = 0.02;            // catch lip height; must exceed the collision pad
-const CATCH_FLARE = NOZZLE_HALFW * 3; // half width of the catch funnel mouth
+const CATCH_HALFW = NOZZLE_HALFW * 1.5; // catch gap is wider: easy landing
 
 const DRIP_X = NOZZLE_XS[0];  // top tray drips on the left...
 const CATCH_X = NOZZLE_XS[1]; // ...and catches on the right
 
 // Top reservoir; the bottom is generated as its point mirror (x,y)→(1-x,1-y).
 const TOP_SEGS = [
-  // nearly flat tray, lowest at the drip gap
+  // nearly flat tray, lowest at the drip gap; the catch-side edges sit at
+  // TRAY_Y - SLOPE so the mirrored (receiving) tray drains into its catch
   [0.0, TRAY_Y - SLOPE, DRIP_X - NOZZLE_HALFW, TRAY_Y],
-  [DRIP_X + NOZZLE_HALFW, TRAY_Y, CATCH_X - NOZZLE_HALFW, TRAY_Y - SLOPE],
-  [CATCH_X + NOZZLE_HALFW, TRAY_Y - SLOPE, 1.0, TRAY_Y - SLOPE * 1.5],
+  [DRIP_X + NOZZLE_HALFW, TRAY_Y, CATCH_X - CATCH_HALFW, TRAY_Y - SLOPE],
+  // stub right of the catch: slightly lower at the gap so liquid landing on
+  // it slides into the catch instead of pooling in the wall corner
+  [CATCH_X + CATCH_HALFW, TRAY_Y - SLOPE * 0.5, 1.0, TRAY_Y - SLOPE],
   // drip spout walls (point down, out of the reservoir)
   [DRIP_X - NOZZLE_HALFW, TRAY_Y, DRIP_X - NOZZLE_HALFW, TRAY_Y + SPOUT_LEN],
   [DRIP_X + NOZZLE_HALFW, TRAY_Y, DRIP_X + NOZZLE_HALFW, TRAY_Y + SPOUT_LEN],
-  // catch lips (rise above the tray so held liquid can't drain out the catch)
-  [CATCH_X - NOZZLE_HALFW, TRAY_Y - SLOPE, CATCH_X - NOZZLE_HALFW, TRAY_Y - SLOPE - LIP],
-  [CATCH_X + NOZZLE_HALFW, TRAY_Y - SLOPE, CATCH_X + NOZZLE_HALFW, TRAY_Y - SLOPE - LIP],
-  // catch funnel (flares open below the tray, guiding incoming drops in)
-  [CATCH_X - CATCH_FLARE, TRAY_Y + SPOUT_LEN, CATCH_X - NOZZLE_HALFW, TRAY_Y - SLOPE],
-  [CATCH_X + CATCH_FLARE, TRAY_Y + SPOUT_LEN, CATCH_X + NOZZLE_HALFW, TRAY_Y - SLOPE],
 ];
 
 const NSEGS = [
@@ -73,6 +71,15 @@ export function buildLevel(w, h) {
     ],
     nozzleHalfW: NOZZLE_HALFW * w,
     nozzleLen: SPOUT_LEN * h,
+    // catch openings: plain gaps at tray level, one-way in physics.js.
+    // dir points INTO the reservoir cavity; the valve plane sits flush with
+    // the adjacent tray edges (TRAY_Y - SLOPE); driftX slides liquid held on
+    // the valve toward the drip nozzle so nothing gets stuck over the gap.
+    catches: [
+      { x: CATCH_X * w, y: (TRAY_Y - SLOPE) * h, dir: -1, driftX: Math.sign(DRIP_X - CATCH_X) },
+      { x: (1 - CATCH_X) * w, y: (1 - TRAY_Y + SLOPE) * h, dir: +1, driftX: Math.sign(CATCH_X - DRIP_X) },
+    ],
+    catchHalfW: CATCH_HALFW * w,
   };
 }
 

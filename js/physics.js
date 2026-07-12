@@ -26,6 +26,10 @@ export class Fluid {
       timer: Math.random() * DRIP_INTERVAL, // desync the drips
       pass: null,
     }));
+    this.catches = this.level.catches.map(n => ({
+      ...n,
+      halfW: this.level.catchHalfW,
+    }));
     this.spawn();
     // spatial hash
     this.cell = this.r * 3.4;
@@ -124,6 +128,35 @@ export class Fluid {
     }
 
     this.throttleNozzles(dt, g);
+    this.catchValves(dt, g);
+  }
+
+  // Catch openings are plain gaps in the tray; this makes them one-way.
+  // Particles crossing the gap plane inward (filling) pass freely; particles
+  // pushing outward from inside the reservoir are snapped back to the plane.
+  // Because there is no depth axis in 2D, liquid resting on a closed valve
+  // would sit over the gap forever, so while the valve is holding (this
+  // reservoir is the upper one) it also drifts that liquid sideways toward
+  // the drip nozzle, letting it rejoin the draining flow.
+  catchValves(dt, g) {
+    const gm = Math.hypot(g.x, g.y) || 1;
+    const band = this.r * 2;
+    for (const c of this.catches) {
+      // holding = gravity pulls this reservoir's liquid out through the gap
+      const holding = -c.dir * g.y > 0.3 * gm;
+      for (const a of this.p) {
+        if (Math.abs(a.x - c.x) > c.halfW) continue;
+        const out = (a.y - c.y) * -c.dir; // >0 once past the plane, outward
+        if (out < -band || out > band) continue;
+        if (out > 0) {
+          // snap back just inside the reservoir
+          a.y = c.y + c.dir * 0.5;
+          a.py = a.y;
+        }
+        // liquid resting on the closed valve drifts toward the drip nozzle
+        if (holding) a.x += c.driftX * this.r * 0.4 * dt * 60;
+      }
+    }
   }
 
   // Constant-rate drip: the currently-upper reservoir's nozzles hold liquid
