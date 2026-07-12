@@ -7,7 +7,7 @@
 // point-symmetric ((x,y) → (w-x, h-y)) so it plays the same after a 180° flip.
 
 const WALL_INSET_FRAC = 0.015; // sealed glass wall thickness (of min(w,h))
-const TRAY_GRADE = 0.05;       // constant tray grade toward the nozzles
+const TRAY_GRADE = 0.09;       // constant tray grade toward the drip nozzle
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const randInt = (a, b) => Math.floor(rand(a, b + 1));
@@ -17,47 +17,50 @@ export function buildLevel(w, h) {
   const r = Math.max(4, m * 0.014); // particle radius (matches physics.js)
   const segs = [];
 
-  // --- top tray with exactly two nozzles (bottom tray is the point mirror).
-  // ROLES (see CLAUDE.md): the DRIP nozzle drains the reservoir; the CATCH
-  // nozzle only receives the stream falling from the other tray's drip
-  // nozzle after a flip. Both are pure geometry — the roles come from the
-  // tray heights alone: the drip gap is the lowest point of the tray and
-  // the catch gap sits at the highest point, so resting liquid always
-  // slides away from the catch and out through the drip. Placing them at
-  // xCatch = w - xDrip makes the point-mirrored bottom drip sit in the
-  // same column as the top catch, so the hourglass loop works both ways up.
-  const trayY = rand(0.08, 0.11) * h;
+  // --- top tray: ONE monotonic incline spanning the full width, with two
+  // nozzle gaps cut into it (bottom tray is the point mirror). ROLES (see
+  // CLAUDE.md): the CATCH nozzle sits near the HIGH end and only receives
+  // the stream falling from the other tray's drip after a flip; the DRIP
+  // nozzle sits near the LOW end and is the only outlet — resting liquid
+  // always slides down the incline away from the catch and out the drip.
+  // The point mirror inverts high/low, so the same tray works in both
+  // orientations. Placing the gaps at xCatch = w - xDrip keeps the bottom
+  // drip in the same column as the top catch for the hourglass loop.
   const spoutLen = rand(0.035, 0.05) * h;
   const dripHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
   const catchHalfW = dripHalfW * 1.4; // wider for an easy landing
-  const xDrip = rand(0.20, 0.34) * w;
-  const xCatch = w - xDrip;
+  const highOnLeft = Math.random() < 0.5;
+  // the drip gap runs (almost) flush to the low wall — a ledge between the
+  // gap and the wall would trap liquid, breaking the monotonic drain
+  const sliver = rand(0.5, 1.5) * r;
+  const xDrip = highOnLeft ? w - dripHalfW - sliver : dripHalfW + sliver;
+  const xCatch = w - xDrip; // high side, flush to the opposite wall
+  const yHigh = rand(0.06, 0.09) * h;
+  // cap the total drop so wide (landscape) vessels keep a shallow tray
+  const grade = Math.min(TRAY_GRADE, 0.09 * h / w);
+  const trayAt = x => yHigh + (highOnLeft ? x : w - x) * grade;
   const gaps = [
     { x: xDrip, halfW: dripHalfW },
     { x: xCatch, halfW: catchHalfW },
-  ];
+  ].sort((a, b) => a.x - b.x);
 
-  // tray heights: lowest (trayY) at the drip gap, rising at a constant
-  // grade toward the catch gap, which is the peak of the whole tray
-  const eDripL = xDrip - dripHalfW, eDripR = xDrip + dripHalfW;
-  const eCatchL = xCatch - catchHalfW, eCatchR = xCatch + catchHalfW;
-  const yCatch = trayY - (eCatchL - eDripR) * TRAY_GRADE;
-  const topSegs = [
-    // wall → drip gap (down toward the drip)
-    [0, trayY - eDripL * TRAY_GRADE, eDripL, trayY],
-    // drip gap → catch gap (monotonic rise; drains back to the drip)
-    [eDripR, trayY, eCatchL, yCatch],
-    // stub beyond the catch: only stray splash lands here; it tilts gently
-    // into the catch gap so nothing pools in the wall corner
-    [eCatchR, yCatch, w, yCatch - (w - eCatchR) * TRAY_GRADE * 0.5],
-    // spout walls: short verticals on both sides of each gap, pointing out
-    // of the reservoir. On the drip they shape the falling stream; on the
-    // catch (once flipped underneath) they act as a funnel for the stream.
-    [eDripL, trayY, eDripL, trayY + spoutLen],
-    [eDripR, trayY, eDripR, trayY + spoutLen],
-    [eCatchL, yCatch, eCatchL, yCatch + spoutLen],
-    [eCatchR, yCatch, eCatchR, yCatch + spoutLen],
-  ];
+  const topSegs = [];
+  // collinear tray pieces along the incline, split by the two gaps
+  const edges = [0, ...gaps.flatMap(g => [g.x - g.halfW, g.x + g.halfW]), w];
+  for (let i = 0; i < edges.length; i += 2) {
+    const x1 = edges[i], x2 = edges[i + 1];
+    if (x2 - x1 < 3 * r) continue; // drop wall-side slivers: gap meets wall
+    topSegs.push([x1, trayAt(x1), x2, trayAt(x2)]);
+  }
+  // nozzle walls: ONLY the catch gets walls — two, STANDING INTO the
+  // reservoir — a raised rim that keeps reservoir liquid out of the catch.
+  // The drip has no walls (the incline leads straight into the hole), so
+  // the tray's underside — the receiving face once flipped — is perfectly
+  // smooth and the arriving stream can never snag on its way to the catch.
+  for (const x of [xCatch - catchHalfW, xCatch + catchHalfW]) {
+    if (x <= 0 || x >= w) continue; // outer edge may coincide with the wall
+    topSegs.push([x, trayAt(x), x, trayAt(x) - spoutLen]);
+  }
   segs.push(...topSegs);
   // bottom reservoir: point-symmetric mirror
   segs.push(...topSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
@@ -114,10 +117,17 @@ export function buildLevel(w, h) {
     if (at) seesaws.push({ x: at.x, y: at.y, half });
   }
 
+  // where the liquid may start: the drip side of the catch rim, so nothing
+  // spawns over (or behind) the catch gap
+  const spawnX = highOnLeft
+    ? [xCatch + catchHalfW + 3 * r, 0.95 * w]
+    : [0.05 * w, xCatch - catchHalfW - 3 * r];
+
   return {
     segments,
     wheels,
     seesaws,
+    spawnX,
     // sealed vessel: glass wall thickness; physics clamps particles inside
     // it and the renderer draws the frame at this width
     inset: m * WALL_INSET_FRAC,
