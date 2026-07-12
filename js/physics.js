@@ -7,6 +7,20 @@ import { Wheel, Seesaw } from './rotor.js';
 const HUES = [196, 330, 45]; // cyan, pink, amber droplet colors
 const DRIP_INTERVAL = 0.18;  // seconds between released drops per nozzle
 
+// The sealed vessel is completely filled: everything around the colored
+// droplets is an immiscible ambient fluid of lower specific gravity (the
+// "clear oil" of a real liquid motion timer). It isn't simulated as
+// particles — it acts on the droplets as buoyancy (reduced effective
+// gravity) and viscous drag toward a terminal velocity.
+const BUOYANCY = 0.35;       // rho_medium / rho_droplet
+const DAMP_BASE = 0.45;      // velocity kept per second (drag in the medium)
+
+// Shallow depth axis: particles get a z coordinate confined to the vessel
+// thickness. Gravity has no z component (device tilt is x/y), so a tiny
+// jitter keeps the liquid spread through the depth.
+const DEPTH_FRAC = 0.3;      // vessel thickness as a fraction of min(w,h)
+const Z_JITTER = 0.08;       // per-step z jitter as a fraction of r
+
 export class Fluid {
   constructor(w, h) {
     this.resize(w, h);
@@ -18,6 +32,8 @@ export class Fluid {
     this.wheel = new Wheel(this.level.wheel.x, this.level.wheel.y, this.level.wheel.r);
     this.seesaw = new Seesaw(this.level.seesaw.x, this.level.seesaw.y, this.level.seesaw.half);
     this.r = Math.max(4, Math.min(w, h) * 0.014); // particle radius
+    this.depth = Math.min(w, h) * DEPTH_FRAC;     // vessel thickness (z axis)
+    this.inset = this.level.inset;                // sealed glass wall thickness
     // one-way drip nozzles with per-nozzle release timers
     this.nozzles = this.level.nozzles.map(n => ({
       ...n,
@@ -25,6 +41,10 @@ export class Fluid {
       throatLen: this.level.nozzleLen,
       timer: Math.random() * DRIP_INTERVAL, // desync the drips
       pass: null,
+    }));
+    this.catches = this.level.catches.map(n => ({
+      ...n,
+      halfW: this.level.catchHalfW,
     }));
     this.spawn();
     // spatial hash
@@ -40,22 +60,26 @@ export class Fluid {
       const hue = HUES[i % HUES.length];
       const gx = (HUES.indexOf(hue) + 0.5) / HUES.length;
       const x = this.w * Math.min(0.96, Math.max(0.04, gx + (Math.random() - 0.5) * 0.24));
-      const y = this.h * (0.01 + Math.random() * 0.035); // above the tray funnel
-      this.p.push({ x, y, px: x, py: y, hue });
+      const y = this.h * (0.02 + Math.random() * 0.035); // above the tray funnel
+      const z = (Math.random() - 0.5) * this.depth * 0.9;
+      this.p.push({ x, y, px: x, py: y, z, pz: z, hue });
     }
   }
 
   step(dt, g) {
     const p = this.p, r = this.r;
-    const damp = Math.pow(0.6, dt); // viscous oil feel
+    const damp = Math.pow(DAMP_BASE, dt); // drag in the ambient medium
+    const geff = 1 - BUOYANCY;            // buoyancy of the ambient medium
 
     // integrate (Verlet)
     for (const a of p) {
       const vx = (a.x - a.px) * damp;
       const vy = (a.y - a.py) * damp;
-      a.px = a.x; a.py = a.y;
-      a.x += vx + g.x * dt * dt;
-      a.y += vy + g.y * dt * dt;
+      const vz = (a.z - a.pz) * damp;
+      a.px = a.x; a.py = a.y; a.pz = a.z;
+      a.x += vx + g.x * geff * dt * dt;
+      a.y += vy + g.y * geff * dt * dt;
+      a.z += vz + (Math.random() - 0.5) * r * Z_JITTER;
     }
 
     // spatial hash
@@ -79,8 +103,8 @@ export class Fluid {
         for (const j of b) {
           if (j <= i) continue;
           const q = p[j];
-          const dx = q.x - a.x, dy = q.y - a.y;
-          const d2 = dx * dx + dy * dy;
+          const dx = q.x - a.x, dy = q.y - a.y, dz = q.z - a.z;
+          const d2 = dx * dx + dy * dy + dz * dz;
           if (d2 >= coh * coh || d2 < 1e-9) continue;
           const d = Math.sqrt(d2);
           let f = 0;
@@ -91,9 +115,9 @@ export class Fluid {
           }
           if (f) {
             f = Math.max(-r * 0.5, Math.min(r * 0.25, f));
-            const ux = dx / d, uy = dy / d;
-            a.x += ux * f * 0.5; a.y += uy * f * 0.5;
-            q.x -= ux * f * 0.5; q.y -= uy * f * 0.5;
+            const ux = dx / d, uy = dy / d, uz = dz / d;
+            a.x += ux * f * 0.5; a.y += uy * f * 0.5; a.z += uz * f * 0.5;
+            q.x -= ux * f * 0.5; q.y -= uy * f * 0.5; q.z -= uz * f * 0.5;
           }
         }
       }
@@ -104,11 +128,15 @@ export class Fluid {
     this.seesaw.step(dt);
     const statics = this.level.segments;
     for (const a of p) {
-      // container walls
-      if (a.x < r) a.x = r;
-      if (a.x > this.w - r) a.x = this.w - r;
-      if (a.y < r) a.y = r;
-      if (a.y > this.h - r) a.y = this.h - r;
+      // sealed container walls (inset by the glass thickness) + depth clamp
+      const lo = this.inset + r;
+      if (a.x < lo) a.x = lo;
+      if (a.x > this.w - lo) a.x = this.w - lo;
+      if (a.y < lo) a.y = lo;
+      if (a.y > this.h - lo) a.y = this.h - lo;
+      const zLim = this.depth / 2 - r;
+      if (a.z < -zLim) { a.z = -zLim; a.pz = a.z; }
+      if (a.z > zLim) { a.z = zLim; a.pz = a.z; }
 
       for (const s of statics) collideSeg(a, s, r, null, dt);
       for (const s of this.wheel.segments) {
@@ -124,6 +152,35 @@ export class Fluid {
     }
 
     this.throttleNozzles(dt, g);
+    this.catchValves(dt, g);
+  }
+
+  // Catch openings are plain gaps in the tray; this makes them one-way.
+  // Particles crossing the gap plane inward (filling) pass freely; particles
+  // pushing outward from inside the reservoir are snapped back to the plane.
+  // Because there is no depth axis in 2D, liquid resting on a closed valve
+  // would sit over the gap forever, so while the valve is holding (this
+  // reservoir is the upper one) it also drifts that liquid sideways toward
+  // the drip nozzle, letting it rejoin the draining flow.
+  catchValves(dt, g) {
+    const gm = Math.hypot(g.x, g.y) || 1;
+    const band = this.r * 2;
+    for (const c of this.catches) {
+      // holding = gravity pulls this reservoir's liquid out through the gap
+      const holding = -c.dir * g.y > 0.3 * gm;
+      for (const a of this.p) {
+        if (Math.abs(a.x - c.x) > c.halfW) continue;
+        const out = (a.y - c.y) * -c.dir; // >0 once past the plane, outward
+        if (out < -band || out > band) continue;
+        if (out > 0) {
+          // snap back just inside the reservoir
+          a.y = c.y + c.dir * 0.5;
+          a.py = a.y;
+        }
+        // liquid resting on the closed valve drifts toward the drip nozzle
+        if (holding) a.x += c.driftX * this.r * 0.4 * dt * 60;
+      }
+    }
   }
 
   // Constant-rate drip: the currently-upper reservoir's nozzles hold liquid
