@@ -44,8 +44,9 @@ export class Fluid {
     const n = 170;
     this.p = [];
     for (let i = 0; i < n; i++) {
-      // start pooled inside the top reservoir
-      const x = this.w * (0.06 + Math.random() * 0.88);
+      // start pooled inside the top reservoir, on the drip-nozzle side —
+      // never over the catch gap, which only receives liquid from below
+      const x = this.w * (0.05 + Math.random() * 0.45);
       const y = this.h * (0.02 + Math.random() * 0.035); // above the tray
       const z = (Math.random() - 0.5) * this.depth * 0.9;
       this.p.push({ x, y, px: x, py: y, z, pz: z });

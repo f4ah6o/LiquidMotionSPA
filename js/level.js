@@ -17,46 +17,47 @@ export function buildLevel(w, h) {
   const r = Math.max(4, m * 0.014); // particle radius (matches physics.js)
   const segs = [];
 
-  // --- top tray with exactly two nozzles (bottom tray is the point mirror):
-  // an OUT nozzle draining downward and a wider IN nozzle that catches the
-  // stream falling from the other tray's OUT after a flip. Placing them at
-  // xIn = w - xOut makes the point-mirrored bottom OUT sit in the same
-  // column as the top IN, so the hourglass loop works both ways up.
+  // --- top tray with exactly two nozzles (bottom tray is the point mirror).
+  // ROLES (see CLAUDE.md): the DRIP nozzle drains the reservoir; the CATCH
+  // nozzle only receives the stream falling from the other tray's drip
+  // nozzle after a flip. Both are pure geometry — the roles come from the
+  // tray heights alone: the drip gap is the lowest point of the tray and
+  // the catch gap sits at the highest point, so resting liquid always
+  // slides away from the catch and out through the drip. Placing them at
+  // xCatch = w - xDrip makes the point-mirrored bottom drip sit in the
+  // same column as the top catch, so the hourglass loop works both ways up.
   const trayY = rand(0.08, 0.11) * h;
   const spoutLen = rand(0.035, 0.05) * h;
-  const outHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
-  const xOut = rand(0.20, 0.34) * w;
+  const dripHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
+  const catchHalfW = dripHalfW * 1.4; // wider for an easy landing
+  const xDrip = rand(0.20, 0.34) * w;
+  const xCatch = w - xDrip;
   const gaps = [
-    { x: xOut, halfW: outHalfW },
-    { x: w - xOut, halfW: outHalfW * 1.4 }, // IN: wider for an easy landing
-  ].sort((a, b) => a.x - b.x);
+    { x: xDrip, halfW: dripHalfW },
+    { x: xCatch, halfW: catchHalfW },
+  ];
 
-  const topSegs = [];
-  // tray pieces between gaps, each with a constant grade down toward its
-  // nearest nozzle edge so liquid never rests anywhere on the tray
-  const edges = [0, ...gaps.flatMap(g => [g.x - g.halfW, g.x + g.halfW]), w];
-  for (let i = 0; i < edges.length; i += 2) {
-    const x1 = edges[i], x2 = edges[i + 1];
-    if (x2 - x1 < r) continue;
-    const leftIsGap = i > 0, rightIsGap = i + 1 < edges.length - 1;
-    if (leftIsGap && rightIsGap) {
-      // piece between the two nozzles: peak in the middle, draining both ways
-      const xm = (x1 + x2) / 2;
-      const drop = (xm - x1) * TRAY_GRADE;
-      topSegs.push([x1, trayY, xm, trayY - drop]);
-      topSegs.push([xm, trayY - drop, x2, trayY]);
-    } else if (rightIsGap) {
-      topSegs.push([x1, trayY - (x2 - x1) * TRAY_GRADE, x2, trayY]);
-    } else {
-      topSegs.push([x1, trayY, x2, trayY - (x2 - x1) * TRAY_GRADE]);
-    }
-  }
-  // spout walls: short verticals on both sides of each gap, pointing out of
-  // the reservoir (pure geometry; they just shape the falling stream)
-  for (const g of gaps) {
-    topSegs.push([g.x - g.halfW, trayY, g.x - g.halfW, trayY + spoutLen]);
-    topSegs.push([g.x + g.halfW, trayY, g.x + g.halfW, trayY + spoutLen]);
-  }
+  // tray heights: lowest (trayY) at the drip gap, rising at a constant
+  // grade toward the catch gap, which is the peak of the whole tray
+  const eDripL = xDrip - dripHalfW, eDripR = xDrip + dripHalfW;
+  const eCatchL = xCatch - catchHalfW, eCatchR = xCatch + catchHalfW;
+  const yCatch = trayY - (eCatchL - eDripR) * TRAY_GRADE;
+  const topSegs = [
+    // wall → drip gap (down toward the drip)
+    [0, trayY - eDripL * TRAY_GRADE, eDripL, trayY],
+    // drip gap → catch gap (monotonic rise; drains back to the drip)
+    [eDripR, trayY, eCatchL, yCatch],
+    // stub beyond the catch: only stray splash lands here; it tilts gently
+    // into the catch gap so nothing pools in the wall corner
+    [eCatchR, yCatch, w, yCatch - (w - eCatchR) * TRAY_GRADE * 0.5],
+    // spout walls: short verticals on both sides of each gap, pointing out
+    // of the reservoir. On the drip they shape the falling stream; on the
+    // catch (once flipped underneath) they act as a funnel for the stream.
+    [eDripL, trayY, eDripL, trayY + spoutLen],
+    [eDripR, trayY, eDripR, trayY + spoutLen],
+    [eCatchL, yCatch, eCatchL, yCatch + spoutLen],
+    [eCatchR, yCatch, eCatchR, yCatch + spoutLen],
+  ];
   segs.push(...topSegs);
   // bottom reservoir: point-symmetric mirror
   segs.push(...topSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
