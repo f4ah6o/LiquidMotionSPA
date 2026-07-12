@@ -27,7 +27,8 @@ export function buildLevel(w, h) {
   // orientations. Placing the gaps at xCatch = w - xDrip keeps the bottom
   // drip in the same column as the top catch for the hourglass loop.
   const spoutLen = rand(0.035, 0.05) * h;
-  const dripHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
+  // narrow outlet: the drip rate is set by this width alone (pure geometry)
+  const dripHalfW = Math.max(2.8 * r, rand(0.028, 0.036) * m);
   const catchHalfW = dripHalfW * 1.4; // wider for an easy landing
   const highOnLeft = Math.random() < 0.5;
   // the drip gap runs (almost) flush to the low wall — a ledge between the
@@ -65,16 +66,59 @@ export function buildLevel(w, h) {
   // bottom reservoir: point-symmetric mirror
   segs.push(...topSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
 
-  // --- cascade ramps (段差) in the upper mid band, mirrored below ---
-  const nRamps = randInt(2, 3); // ×2 by mirroring → 4..6 total
+  // --- zigzag staircase (階段) under the drip column, mirrored below ---
+  // the signature piece of the real toy: short, nearly level steps offset
+  // alternately, so falling beads land on a step, creep to its lip and drip
+  // to the next one — pacing emerges from step tilt and surface friction
   const yTop = 0.20 * h, yBot = 0.48 * h;
+  const stairSegs = [];
+  {
+    const nSteps = randInt(4, 7);
+    const stepLen = rand(0.10, 0.16) * w;
+    const dropY = (yBot - yTop) / nSteps; // vertical gap between steps
+    const stepTilt = rand(0.010, 0.020) * h; // gentle grade toward the lip
+    // zigzag direction: first step carries the drip stream inward. The
+    // drip gap is flush to the wall, so its stream falls along the wall —
+    // the first step's back edge must reach the wall to catch it.
+    let dir = xDrip < w / 2 ? 1 : -1;
+    let xLip = xDrip + dir * stepLen * rand(0.9, 1.1);
+    for (let i = 0; i < nSteps; i++) {
+      const y = yTop + (i + 0.5) * dropY;
+      let xBack = xLip - dir * stepLen;
+      // clamp the back edge to the wall (a slightly long first tread is
+      // fine); if the lip itself runs out of room, turn the zigzag around
+      xBack = Math.max(0.02 * w, Math.min(0.98 * w, xBack));
+      if (xLip < 0.06 * w || xLip > 0.94 * w) {
+        dir = -dir;
+        xLip = xBack + dir * stepLen;
+      }
+      stairSegs.push([xBack, y - stepTilt, xLip, y]);
+      // next step: reversed, its lip roughly half a step back past this
+      // one, so the drop from this lip lands on the next tread — slightly
+      // asymmetric so the staircase marches diagonally across the vessel
+      // like the real toy's, instead of hugging one wall
+      dir = -dir;
+      const toCenter = (w / 2 - xLip) * dir > 0;
+      xLip = xLip + dir * stepLen * (toCenter ? rand(0.6, 0.75) : rand(0.35, 0.5));
+    }
+  }
+  segs.push(...stairSegs);
+  segs.push(...stairSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
+
+  // --- a ramp or two (段差) elsewhere in the mid band, mirrored below ---
+  const nRamps = randInt(0, 1); // ×2 by mirroring
   const rampSegs = [];
   for (let i = 0; i < nRamps; i++) {
-    const y = yTop + ((i + rand(0.2, 0.8)) / nRamps) * (yBot - yTop);
+    const y = yTop + rand(0.2, 0.8) * (yBot - yTop);
     const len = rand(0.2, 0.34) * w;
     const x1 = rand(0.06, 0.94 - len / w) * w;
     const tilt = rand(0.04, 0.08) * h * (i % 2 ? -1 : 1);
-    rampSegs.push([x1, y - tilt / 2, x1 + len, y + tilt / 2]);
+    const seg = [x1, y - tilt / 2, x1 + len, y + tilt / 2];
+    // don't cut through the staircase column
+    const nearStairs = stairSegs.some(([sx1, , sx2]) =>
+      Math.min(x1, x1 + len) < Math.max(sx1, sx2) + 0.05 * w &&
+      Math.max(x1, x1 + len) > Math.min(sx1, sx2) - 0.05 * w);
+    if (!nearStairs) rampSegs.push(seg);
   }
   segs.push(...rampSegs);
   segs.push(...rampSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));

@@ -11,8 +11,8 @@ import { Wheel, Seesaw } from './rotor.js';
 // "clear oil" of a real liquid motion timer). It isn't simulated as
 // particles — it acts on the droplets as buoyancy (reduced effective
 // gravity) and viscous drag toward a terminal velocity.
-const BUOYANCY = 0.35;       // rho_medium / rho_droplet
-const DAMP_BASE = 0.45;      // velocity kept per second (drag in the medium)
+const BUOYANCY = 0.70;       // rho_medium / rho_droplet
+const DAMP_BASE = 0.04;      // velocity kept per second (drag in the medium)
 
 // Shallow depth axis: particles get a z coordinate confined to the vessel
 // thickness. Gravity has no z component (device tilt is x/y), so a tiny
@@ -99,7 +99,7 @@ export class Fluid {
           if (d < rep) {
             f = -(rep - d) * 0.5; // push apart, strong
           } else {
-            f = (d - rep) * 0.10; // pull together (surface tension -> round beads)
+            f = (d - rep) * 0.14; // pull together (surface tension -> round beads)
           }
           if (f) {
             f = Math.max(-r * 0.5, Math.min(r * 0.25, f));
@@ -167,8 +167,8 @@ function collideSeg(a, s, r, rotor, dt) {
   if (vn < 0) {
     // tangential friction + slight normal restitution: beads sit on surfaces
     // instead of wetting/smearing along them (large contact angle)
-    a.px = a.x - (vx - vn * ux) * 0.95 + vn * ux * 0.25;
-    a.py = a.y - (vy - vn * uy) * 0.95 + vn * uy * 0.25;
+    a.px = a.x - (vx - vn * ux) * 0.85 + vn * ux * 0.25;
+    a.py = a.y - (vy - vn * uy) * 0.85 + vn * uy * 0.25;
     if (rotor) rotor.applyImpulse(a.x, a.y, -vn * ux, -vn * uy);
   }
   if (rotor) {
