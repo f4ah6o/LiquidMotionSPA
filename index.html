@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b1020">
+<title>Liquid Motion Toy</title>
+<link rel="stylesheet" href="./css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%2337d5ff'/%3E%3C/svg%3E">
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud">
+  <button id="flipBtn" title="容器を反転">⟳ 反転</button>
+  <div id="tiltInfo"></div>
+</div>
+
+<div id="startOverlay">
+  <div class="panel">
+    <h1>Liquid Motion Toy</h1>
+    <p>端末を傾けると重力が変わり、色付きの液滴が段差や羽根車を通って流れます。ひっくり返すと砂時計のように再開します。</p>
+    <button id="startBtn">タップして開始</button>
+  </div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
