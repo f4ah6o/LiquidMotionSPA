@@ -54,12 +54,12 @@ export class Renderer {
     o.setTransform(1, 0, 0, 1, 0, 0);
     o.clearRect(0, 0, this.off.width, this.off.height);
     o.globalCompositeOperation = 'lighter';
-    const R = fluid.r * 2.8 * s;
+    const R = fluid.r * 2.4 * s;
     for (const p of fluid.p) {
       const x = p.x * s, y = p.y * s;
       const g = o.createRadialGradient(x, y, 0, x, y, R);
       g.addColorStop(0, `hsla(${p.hue}, 95%, 62%, 0.95)`);
-      g.addColorStop(0.55, `hsla(${p.hue}, 95%, 55%, 0.55)`);
+      g.addColorStop(0.65, `hsla(${p.hue}, 95%, 55%, 0.55)`);
       g.addColorStop(1, `hsla(${p.hue}, 95%, 50%, 0)`);
       o.fillStyle = g;
       o.beginPath();
@@ -111,15 +111,34 @@ export class Renderer {
       ctx.lineTo(s.x2, s.y2);
       ctx.stroke();
     }
+    // toothed gear rim so the rotation reads clearly
+    const teeth = wheel.paddles * 2;
+    const r0 = wheel.r * 1.0, r1 = wheel.r * 1.12;
+    ctx.beginPath();
+    for (let i = 0; i < teeth; i++) {
+      const a0 = wheel.angle + (i * Math.PI * 2) / teeth;
+      const a1 = a0 + Math.PI / teeth;
+      const rr = i % 2 ? r0 : r1;
+      ctx.lineTo(wheel.cx + Math.cos(a0) * rr, wheel.cy + Math.sin(a0) * rr);
+      ctx.lineTo(wheel.cx + Math.cos(a1) * rr, wheel.cy + Math.sin(a1) * rr);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,214,120,0.45)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // hub + rotating marker dot
     ctx.beginPath();
     ctx.arc(wheel.cx, wheel.cy, wheel.r * 0.16, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,230,170,0.9)';
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(wheel.cx, wheel.cy, wheel.r, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,214,120,0.2)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    ctx.arc(
+      wheel.cx + Math.cos(wheel.angle) * wheel.r * 0.45,
+      wheel.cy + Math.sin(wheel.angle) * wheel.r * 0.45,
+      3, 0, Math.PI * 2,
+    );
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fill();
   }
 
   drawSeesaw(seesaw) {
