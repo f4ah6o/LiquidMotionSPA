@@ -7,7 +7,7 @@
 // point-symmetric ((x,y) → (w-x, h-y)) so it plays the same after a 180° flip.
 
 const WALL_INSET_FRAC = 0.015; // sealed glass wall thickness (of min(w,h))
-const TRAY_MARGIN = 0.032;     // slope drop across a tray piece (of h)
+const TRAY_GRADE = 0.05;       // constant tray grade toward the nozzles
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const randInt = (a, b) => Math.floor(rand(a, b + 1));
@@ -17,36 +17,38 @@ export function buildLevel(w, h) {
   const r = Math.max(4, m * 0.014); // particle radius (matches physics.js)
   const segs = [];
 
-  // --- top tray with 1..2 gaps (bottom tray is the point mirror) ---
+  // --- top tray with exactly two nozzles (bottom tray is the point mirror):
+  // an OUT nozzle draining downward and a wider IN nozzle that catches the
+  // stream falling from the other tray's OUT after a flip. Placing them at
+  // xIn = w - xOut makes the point-mirrored bottom OUT sit in the same
+  // column as the top IN, so the hourglass loop works both ways up.
   const trayY = rand(0.08, 0.11) * h;
   const spoutLen = rand(0.035, 0.05) * h;
-  const nGaps = randInt(1, 2);
-  const gaps = [];
-  while (gaps.length < nGaps) {
-    const halfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
-    const x = rand(0.18, 0.82) * w;
-    if (gaps.some(g => Math.abs(g.x - x) < g.halfW + halfW + 0.18 * w)) continue;
-    gaps.push({ x, halfW });
-  }
-  gaps.sort((a, b) => a.x - b.x);
+  const outHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
+  const xOut = rand(0.20, 0.34) * w;
+  const gaps = [
+    { x: xOut, halfW: outHalfW },
+    { x: w - xOut, halfW: outHalfW * 1.4 }, // IN: wider for an easy landing
+  ].sort((a, b) => a.x - b.x);
 
   const topSegs = [];
-  const drop = TRAY_MARGIN * h;
-  // tray pieces between gaps, each sloping down toward its nearest gap edge
+  // tray pieces between gaps, each with a constant grade down toward its
+  // nearest nozzle edge so liquid never rests anywhere on the tray
   const edges = [0, ...gaps.flatMap(g => [g.x - g.halfW, g.x + g.halfW]), w];
   for (let i = 0; i < edges.length; i += 2) {
     const x1 = edges[i], x2 = edges[i + 1];
     if (x2 - x1 < r) continue;
     const leftIsGap = i > 0, rightIsGap = i + 1 < edges.length - 1;
     if (leftIsGap && rightIsGap) {
-      // piece between two gaps: peak in the middle, draining both ways
+      // piece between the two nozzles: peak in the middle, draining both ways
       const xm = (x1 + x2) / 2;
+      const drop = (xm - x1) * TRAY_GRADE;
       topSegs.push([x1, trayY, xm, trayY - drop]);
       topSegs.push([xm, trayY - drop, x2, trayY]);
     } else if (rightIsGap) {
-      topSegs.push([x1, trayY - drop, x2, trayY]);
+      topSegs.push([x1, trayY - (x2 - x1) * TRAY_GRADE, x2, trayY]);
     } else {
-      topSegs.push([x1, trayY, x2, trayY - drop]);
+      topSegs.push([x1, trayY, x2, trayY - (x2 - x1) * TRAY_GRADE]);
     }
   }
   // spout walls: short verticals on both sides of each gap, pointing out of
