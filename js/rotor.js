@@ -4,7 +4,7 @@
 import { makeSeg } from './level.js';
 
 export class Wheel {
-  constructor(cx, cy, r, paddles = 6) {
+  constructor(cx, cy, r, paddles = 8) {
     this.cx = cx; this.cy = cy; this.r = r;
     this.paddles = paddles;
     this.angle = 0;
@@ -16,21 +16,31 @@ export class Wheel {
 
   rebuild() {
     this.segments.length = 0;
+    const step = (Math.PI * 2) / this.paddles;
     for (let i = 0; i < this.paddles; i++) {
-      const a = this.angle + (i * Math.PI * 2) / this.paddles;
+      const a = this.angle + i * step;
+      const tx = this.cx + Math.cos(a) * this.r;
+      const ty = this.cy + Math.sin(a) * this.r;
+      // radial spoke
       this.segments.push(makeSeg(
         this.cx + Math.cos(a) * this.r * 0.18,
         this.cy + Math.sin(a) * this.r * 0.18,
-        this.cx + Math.cos(a) * this.r,
-        this.cy + Math.sin(a) * this.r,
+        tx, ty,
+      ));
+      // short lip at the tip forming a bucket -> vertical drips carry the wheel
+      const b = a + step * 0.45;
+      this.segments.push(makeSeg(
+        tx, ty,
+        this.cx + Math.cos(b) * this.r * 0.88,
+        this.cy + Math.sin(b) * this.r * 0.88,
       ));
     }
   }
 
   step(dt) {
-    this.omega += (this.torque / (this.r * this.r * 40)) * dt;
-    this.omega *= Math.pow(0.35, dt); // fluid drag
-    this.omega = Math.max(-6, Math.min(6, this.omega));
+    this.omega += (this.torque / (this.r * this.r * 4)) * dt;
+    this.omega *= Math.pow(0.6, dt); // fluid drag
+    this.omega = Math.max(-8, Math.min(8, this.omega));
     this.angle += this.omega * dt;
     this.torque = 0;
     this.rebuild();
@@ -39,7 +49,13 @@ export class Wheel {
   // called by physics when a particle is pushed out at (px,py) with impulse (ix,iy)
   applyImpulse(px, py, ix, iy) {
     const rx = px - this.cx, ry = py - this.cy;
-    this.torque += (rx * iy - ry * ix) * 60;
+    this.torque += (rx * iy - ry * ix) * 600;
+  }
+
+  // weight of liquid resting in a bucket turns the wheel (water-wheel drive)
+  applyWeight(px, py, gx, gy) {
+    const rx = px - this.cx, ry = py - this.cy;
+    this.torque += (rx * gy - ry * gx) * 0.1;
   }
 
   // velocity of the paddle surface at a point (for dragging particles along)

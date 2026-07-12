@@ -20,6 +20,7 @@ function size() {
   renderer.resize(w, h, dpr);
   if (!fluid) fluid = new Fluid(w, h);
   else fluid.resize(w, h);
+  window.__fluid = fluid; // debug/testing hook
 }
 size();
 let resizeTimer = 0;
