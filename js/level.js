@@ -19,6 +19,7 @@ const TRAY_Y = 0.09;         // top tray plane (bottom tray at 1 - TRAY_Y)
 const SPOUT_LEN = 0.045;     // spout wall length (normalized by h)
 
 const SLOPE = 0.012;         // near-horizontal grade toward the drip nozzle
+const WALL_INSET_FRAC = 0.015; // sealed glass wall thickness (of min(w,h))
 const CATCH_HALFW = NOZZLE_HALFW * 1.5; // catch gap is wider: easy landing
 
 const DRIP_X = NOZZLE_XS[0];  // top tray drips on the left...
@@ -80,6 +81,9 @@ export function buildLevel(w, h) {
       { x: (1 - CATCH_X) * w, y: (1 - TRAY_Y + SLOPE) * h, dir: +1, driftX: Math.sign(CATCH_X - DRIP_X) },
     ],
     catchHalfW: CATCH_HALFW * w,
+    // sealed vessel: glass wall thickness; physics clamps particles inside
+    // it and the renderer draws the frame at this width
+    inset: Math.min(w, h) * WALL_INSET_FRAC,
   };
 }
 

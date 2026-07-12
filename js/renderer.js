@@ -37,16 +37,36 @@ export class Renderer {
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
 
+    // ambient medium: the sealed vessel is filled edge to edge with a
+    // lighter immiscible fluid — tint the whole interior so it reads as
+    // liquid, not empty space
+    const inset = fluid.inset;
+    const med = ctx.createLinearGradient(0, 0, 0, h);
+    med.addColorStop(0, 'rgba(120,170,200,0.10)');
+    med.addColorStop(1, 'rgba(70,110,150,0.18)');
+    ctx.fillStyle = med;
+    ctx.fillRect(inset, inset, w - inset * 2, h - inset * 2);
+    const sheen = ctx.createLinearGradient(0, 0, w, h);
+    sheen.addColorStop(0.15, 'rgba(180,220,255,0)');
+    sheen.addColorStop(0.4, 'rgba(180,220,255,0.05)');
+    sheen.addColorStop(0.6, 'rgba(180,220,255,0)');
+    ctx.fillStyle = sheen;
+    ctx.fillRect(inset, inset, w - inset * 2, h - inset * 2);
+
     this.drawLiquid(fluid);
 
     this.drawObstacles(fluid);
     this.drawWheel(fluid.wheel);
     this.drawSeesaw(fluid.seesaw);
 
-    // glass frame
-    ctx.strokeStyle = 'rgba(160,200,255,0.35)';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(1.5, 1.5, w - 3, h - 3);
+    // sealed glass frame: a solid wall of `inset` thickness with a bright
+    // inner edge — the vessel is closed on all sides
+    ctx.strokeStyle = 'rgba(150,190,240,0.55)';
+    ctx.lineWidth = inset;
+    ctx.strokeRect(inset / 2, inset / 2, w - inset, h - inset);
+    ctx.strokeStyle = 'rgba(210,235,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(inset + 1, inset + 1, w - inset * 2 - 2, h - inset * 2 - 2);
   }
 
   drawLiquid(fluid) {
@@ -54,12 +74,18 @@ export class Renderer {
     o.setTransform(1, 0, 0, 1, 0, 0);
     o.clearRect(0, 0, this.off.width, this.off.height);
     o.globalCompositeOperation = 'lighter';
-    const R = fluid.r * 2.4 * s;
-    for (const p of fluid.p) {
-      const x = p.x * s, y = p.y * s;
+    // depth: draw back-to-front (+z = near); nearer blobs are larger,
+    // brighter, and shifted by a slight parallax
+    const sorted = fluid.p.slice().sort((a, b) => a.z - b.z);
+    const halfD = fluid.depth / 2;
+    for (const p of sorted) {
+      const zn = p.z / halfD; // -1 (far) .. +1 (near)
+      const R = fluid.r * 2.4 * s * (1 + zn * 0.35);
+      const alpha = 0.65 + 0.35 * (zn + 1) / 2;
+      const x = (p.x + p.z * 0.06) * s, y = p.y * s;
       const g = o.createRadialGradient(x, y, 0, x, y, R);
-      g.addColorStop(0, `hsla(${p.hue}, 95%, 62%, 0.95)`);
-      g.addColorStop(0.65, `hsla(${p.hue}, 95%, 55%, 0.55)`);
+      g.addColorStop(0, `hsla(${p.hue}, 95%, 62%, ${0.95 * alpha})`);
+      g.addColorStop(0.65, `hsla(${p.hue}, 95%, 55%, ${0.55 * alpha})`);
       g.addColorStop(1, `hsla(${p.hue}, 95%, 50%, 0)`);
       o.fillStyle = g;
       o.beginPath();
@@ -72,13 +98,13 @@ export class Renderer {
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.off, 0, 0, this.w, this.h);
-    // specular highlights on droplet cores
+    // specular highlights on the nearest droplet cores
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    const hr = fluid.r * 0.4;
-    for (let i = 0; i < fluid.p.length; i += 7) {
-      const p = fluid.p[i];
+    for (let i = sorted.length - 1; i >= 0 && i >= sorted.length - 24; i -= 3) {
+      const p = sorted[i];
+      const hr = fluid.r * 0.4 * (1 + p.z / halfD * 0.35);
       ctx.beginPath();
-      ctx.arc(p.x - hr, p.y - hr, hr, 0, Math.PI * 2);
+      ctx.arc(p.x + p.z * 0.06 - hr, p.y - hr, hr, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
