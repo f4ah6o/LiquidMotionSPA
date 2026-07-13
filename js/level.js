@@ -27,12 +27,22 @@ export function buildLevel(w, h) {
   // orientations. Placing the gaps at xCatch = w - xDrip keeps the bottom
   // drip in the same column as the top catch for the hourglass loop.
   const spoutLen = rand(0.035, 0.05) * h;
-  const dripHalfW = Math.max(4.5 * r, rand(0.045, 0.06) * m);
-  const catchHalfW = dripHalfW * 1.4; // wider for an easy landing
+  // A drip nozzle is a narrow edge opening, not a long tube. The opening is
+  // only about 3 particle radii wide on each side at the tray plane: enough
+  // room for a particle-sized neck to pass the rounded edge and glass frame,
+  // while still narrow enough for gravity and surface tension to pinch it
+  // into a drop.
+  // The old 4.5..6 particle-radius half-width behaved like an open chute and
+  // made a continuous stream. Keep the gap at the low wall so there is no
+  // shelf, while accounting for the glass-wall collision radius.
+  const dripHalfW = Math.max(3.0 * r, rand(0.026, 0.034) * m);
+  // The catch remains wider than the drip so a falling drop can land without
+  // changing the drip's capillary geometry.
+  const catchHalfW = Math.max(2.4 * r, dripHalfW * 1.8);
   const highOnLeft = Math.random() < 0.5;
   // the drip gap runs (almost) flush to the low wall — a ledge between the
   // gap and the wall would trap liquid, breaking the monotonic drain
-  const sliver = rand(0.5, 1.5) * r;
+  const sliver = rand(0.2, 0.6) * r;
   const xDrip = highOnLeft ? w - dripHalfW - sliver : dripHalfW + sliver;
   const xCatch = w - xDrip; // high side, flush to the opposite wall
   const yHigh = rand(0.06, 0.09) * h;
