@@ -1,237 +1,275 @@
-// Droplet fluid: Verlet particles with short-range repulsion (incompressibility)
-// and cohesion (surface tension). Blobs split and merge emergently, and flow
-// through tray gaps is driven by gravity and inter-particle forces alone —
-// there are no valves, throttles or scripted velocities anywhere.
-
 import { buildLevel } from './level.js';
-import { Wheel, Seesaw } from './rotor.js';
+import { createRng } from './random.js';
+import { Gate, Seesaw, Wheel } from './rotor.js';
 
-// The sealed vessel is completely filled: everything around the colored
-// droplets is an immiscible ambient fluid of lower specific gravity (the
-// "clear oil" of a real liquid motion timer). It isn't simulated as
-// particles — it acts on the droplets as buoyancy (reduced effective
-// gravity) and viscous drag toward a terminal velocity.
-const BUOYANCY = 0.35;       // rho_medium / rho_droplet
-const DAMP_BASE = 0.45;      // velocity kept per second (drag in the medium)
-const PRESSURE_STIFFNESS = 2800; // soft incompressibility in px/s²
-const REST_DENSITY = 2.0;        // normalized 2-D neighbor density
-const MUTUAL_VISCOSITY = 1.8;    // pairwise liquid shear damping
+const PRESSURE_STIFFNESS = 2800;
+const REST_DENSITY = 2;
+const DEPTH_FRAC = 0.3;
+const Z_JITTER = 0.08;
 
-// Shallow depth axis: particles get a z coordinate confined to the vessel
-// thickness. Gravity has no z component (device tilt is x/y), so a tiny
-// jitter keeps the liquid spread through the depth.
-const DEPTH_FRAC = 0.3;      // vessel thickness as a fraction of min(w,h)
-const Z_JITTER = 0.08;       // per-step z jitter as a fraction of r
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export class Fluid {
-  constructor(w, h) {
-    this.resize(w, h);
+  constructor(w, h, scene) {
+    this.w = w;
+    this.h = h;
+    this.scene = scene;
+    this.grid = new Map();
+    this.reset(scene);
   }
 
-  resize(w, h) {
-    this.w = w; this.h = h;
-    this.level = buildLevel(w, h);
-    this.wheels = this.level.wheels.map(o => new Wheel(o.x, o.y, o.r));
-    this.seesaws = this.level.seesaws.map(o => new Seesaw(o.x, o.y, o.half));
-    this.r = Math.max(4, Math.min(w, h) * 0.014); // particle radius
-    this.depth = Math.min(w, h) * DEPTH_FRAC;     // vessel thickness (z axis)
-    this.inset = this.level.inset;                // sealed glass wall thickness
-    this.hue = Math.floor(Math.random() * 360);   // single droplet color
+  reset(scene = this.scene) {
+    this.scene = JSON.parse(JSON.stringify(scene));
+    this._build(`${this.scene.id}:${this.scene.seed}`);
     this.spawn();
-    // spatial hash
+    return this.initialSignature();
+  }
+
+  _build(seed) {
+    this.layoutRng = createRng(`${seed}:layout`);
+    this.spawnRng = createRng(`${seed}:spawn`);
+    this.simRng = createRng(`${seed}:simulation`);
+    this.level = buildLevel(this.w, this.h, this.scene, this.layoutRng);
+    this.wheels = this.level.wheels.map(item => new Wheel(item.x, item.y, item.r, item.paddles || 8, item.id));
+    this.seesaws = this.level.seesaws.map(item => new Seesaw(item.x, item.y, item.half, item.id));
+    this.gates = this.level.gates.map(item => new Gate(item.x, item.y, item.half, item));
+    this.r = Math.max(4, Math.min(this.w, this.h) * 0.014);
+    this.depth = Math.min(this.w, this.h) * DEPTH_FRAC;
+    this.inset = this.level.inset;
+    this.hue = this.scene.fluid.hue;
     this.cell = this.r * 4.4;
-    this.grid = new Map();
   }
 
   spawn() {
-    const n = 170;
+    const count = this.scene.fluid.particleCount || 170;
     this.p = [];
-    for (let i = 0; i < n; i++) {
-      // start pooled inside the top reservoir, on the drip-nozzle side —
-      // never over the catch gap, which only receives liquid from below
-      const [sx0, sx1] = this.level.spawnX;
-      const x = sx0 + Math.random() * (sx1 - sx0);
-      const y = this.h * (0.02 + Math.random() * 0.035); // above the tray
-      const z = (Math.random() - 0.5) * this.depth * 0.9;
+    for (let i = 0; i < count; i++) {
+      const [minX, maxX] = this.level.spawnX;
+      const x = this.spawnRng.float(minX, maxX);
+      const y = this.h * this.spawnRng.float(0.02, 0.055);
+      const z = this.spawnRng.float(-0.45, 0.45) * this.depth;
       this.p.push({ x, y, px: x, py: y, z, pz: z });
     }
   }
 
-  step(dt, g) {
-    const p = this.p, r = this.r;
-    const damp = Math.pow(DAMP_BASE, dt); // drag in the ambient medium
-    const geff = 1 - BUOYANCY;            // buoyancy of the ambient medium
+  resize(w, h) {
+    if (w === this.w && h === this.h) return;
+    const oldW = this.w;
+    const oldH = this.h;
+    const oldDepth = this.depth;
+    const particles = this.p;
+    const wheelState = new Map(this.wheels.map(wheel => [wheel.id, { angle: wheel.angle, omega: wheel.omega }]));
+    const seesawState = new Map(this.seesaws.map(seesaw => [seesaw.id, { angle: seesaw.angle, omega: seesaw.omega }]));
+    const gateState = new Map(this.gates.map(gate => [gate.id, { contactCharge: gate.contactCharge, openAmount: gate.openAmount }]));
 
-    // integrate (Verlet)
-    for (const a of p) {
-      const vx = (a.x - a.px) * damp;
-      const vy = (a.y - a.py) * damp;
-      const vz = (a.z - a.pz) * damp;
-      a.px = a.x; a.py = a.y; a.pz = a.z;
-      a.x += vx + g.x * geff * dt * dt;
-      a.y += vy + g.y * geff * dt * dt;
-      a.z += vz + (Math.random() - 0.5) * r * Z_JITTER;
+    this.w = w;
+    this.h = h;
+    this._build(`${this.scene.id}:${this.scene.seed}`);
+
+    const scaleX = w / oldW;
+    const scaleY = h / oldH;
+    const scaleZ = this.depth / oldDepth;
+    this.p = particles.map(particle => ({
+      x: particle.x * scaleX,
+      y: particle.y * scaleY,
+      px: particle.px * scaleX,
+      py: particle.py * scaleY,
+      z: particle.z * scaleZ,
+      pz: particle.pz * scaleZ,
+    }));
+
+    for (const wheel of this.wheels) Object.assign(wheel, wheelState.get(wheel.id) || {});
+    for (const seesaw of this.seesaws) Object.assign(seesaw, seesawState.get(seesaw.id) || {});
+    for (const gate of this.gates) Object.assign(gate, gateState.get(gate.id) || {});
+  }
+
+  initialSignature() {
+    return this.p.slice(0, 12).map(particle => [particle.x, particle.y, particle.z].map(value => Number(value.toFixed(4))));
+  }
+
+  motionEnergy() {
+    if (!this.p.length) return 0;
+    let total = 0;
+    for (const particle of this.p) total += Math.hypot(particle.x - particle.px, particle.y - particle.py);
+    return total / this.p.length;
+  }
+
+  step(dt, gravity) {
+    const particles = this.p;
+    const radius = this.r;
+    const fluid = this.scene.fluid;
+    const buoyancy = clamp(fluid.ambientSpecificGravity / fluid.specificGravity, 0.1, 0.8);
+    const dampingBase = clamp(0.56 - (fluid.viscosity - 1) * 0.18, 0.2, 0.78);
+    const mutualViscosity = 1.8 * fluid.viscosity;
+    const cohesionScale = fluid.cohesion;
+    const damp = Math.pow(dampingBase, dt);
+    const effectiveGravity = 1 - buoyancy;
+
+    for (const particle of particles) {
+      const velocityX = (particle.x - particle.px) * damp;
+      const velocityY = (particle.y - particle.py) * damp;
+      const velocityZ = (particle.z - particle.pz) * damp;
+      particle.px = particle.x;
+      particle.py = particle.y;
+      particle.pz = particle.z;
+      particle.x += velocityX + gravity.x * effectiveGravity * dt * dt;
+      particle.y += velocityY + gravity.y * effectiveGravity * dt * dt;
+      particle.z += velocityZ + this.simRng.float(-0.5, 0.5) * radius * Z_JITTER;
     }
 
-    // spatial hash. The cell is as wide as the cohesion kernel so a narrow
-    // nozzle still sees every particle that can contribute to a neck.
-    const cell = this.cell, grid = this.grid;
-    grid.clear();
-    for (let i = 0; i < p.length; i++) {
-      const k = ((p[i].x / cell) | 0) * 4096 + ((p[i].y / cell) | 0);
-      let b = grid.get(k);
-      if (!b) grid.set(k, b = []);
-      b.push(i);
+    const cell = this.cell;
+    this.grid.clear();
+    for (let i = 0; i < particles.length; i++) {
+      const key = ((particles[i].x / cell) | 0) * 4096 + ((particles[i].y / cell) | 0);
+      const bucket = this.grid.get(key) || [];
+      bucket.push(i);
+      this.grid.set(key, bucket);
     }
 
-    // Estimate local density before applying pressure. This is a deliberately
-    // small, normalized SPH-style pass: it keeps a blob nearly incompressible
-    // while allowing a thin neck to stretch and pinch off at the drip edge.
-    const rep = 1.9 * r, coh = 4.4 * r;
-    const density = new Float32Array(p.length);
-    for (let i = 0; i < p.length; i++) {
-      const a = p[i];
-      const cx = (a.x / cell) | 0, cy = (a.y / cell) | 0;
-      for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
-        const b = grid.get((cx + ox) * 4096 + (cy + oy));
-        if (!b) continue;
-        for (const j of b) {
+    const repulsion = 1.9 * radius;
+    const cohesion = 4.4 * radius;
+    const density = new Float32Array(particles.length);
+    for (let i = 0; i < particles.length; i++) {
+      const particle = particles[i];
+      const cellX = (particle.x / cell) | 0;
+      const cellY = (particle.y / cell) | 0;
+      for (let offsetX = -1; offsetX <= 1; offsetX++) for (let offsetY = -1; offsetY <= 1; offsetY++) {
+        const bucket = this.grid.get((cellX + offsetX) * 4096 + (cellY + offsetY));
+        if (!bucket) continue;
+        for (const j of bucket) {
           if (j <= i) continue;
-          const q = p[j];
-          const dx = q.x - a.x, dy = q.y - a.y;
-          const d = Math.hypot(dx, dy);
-          if (d >= coh || d < 1e-9) continue;
-          const w = 1 - d / coh;
-          const weight = w * w;
+          const other = particles[j];
+          const distance = Math.hypot(other.x - particle.x, other.y - particle.y);
+          if (distance >= cohesion || distance < 1e-9) continue;
+          const weight = (1 - distance / cohesion) ** 2;
           density[i] += weight;
           density[j] += weight;
         }
       }
     }
 
-    // Pairwise pressure, cohesion, and viscous shear. Every term is a
-    // symmetric force between particles; there is no nozzle-specific motion
-    // or release timer here, so drops detach only when gravity wins naturally.
-    for (let i = 0; i < p.length; i++) {
-      const a = p[i];
-      const cx = (a.x / cell) | 0, cy = (a.y / cell) | 0;
-      for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
-        const b = grid.get((cx + ox) * 4096 + (cy + oy));
-        if (!b) continue;
-        for (const j of b) {
+    for (let i = 0; i < particles.length; i++) {
+      const particle = particles[i];
+      const cellX = (particle.x / cell) | 0;
+      const cellY = (particle.y / cell) | 0;
+      for (let offsetX = -1; offsetX <= 1; offsetX++) for (let offsetY = -1; offsetY <= 1; offsetY++) {
+        const bucket = this.grid.get((cellX + offsetX) * 4096 + (cellY + offsetY));
+        if (!bucket) continue;
+        for (const j of bucket) {
           if (j <= i) continue;
-          const q = p[j];
-          const dx = q.x - a.x, dy = q.y - a.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 >= coh * coh || d2 < 1e-9) continue;
-          const d = Math.sqrt(d2);
-          const ux = dx / d, uy = dy / d;
-
-          // Pressure only acts where local density exceeds the resting liquid
-          // density. It is soft enough to keep the liquid deformable.
-          const over = Math.max(0, density[i] - REST_DENSITY)
-            + Math.max(0, density[j] - REST_DENSITY);
-          if (over) {
-            const grad = (1 - d / coh) / coh;
-            const push = over * PRESSURE_STIFFNESS * grad * dt * dt;
-            a.x -= ux * push * 0.5; a.y -= uy * push * 0.5;
-            q.x += ux * push * 0.5; q.y += uy * push * 0.5;
+          const other = particles[j];
+          const dx = other.x - particle.x;
+          const dy = other.y - particle.y;
+          const distanceSquared = dx * dx + dy * dy;
+          if (distanceSquared >= cohesion * cohesion || distanceSquared < 1e-9) continue;
+          const distance = Math.sqrt(distanceSquared);
+          const unitX = dx / distance;
+          const unitY = dy / distance;
+          const excessDensity = Math.max(0, density[i] - REST_DENSITY) + Math.max(0, density[j] - REST_DENSITY);
+          if (excessDensity) {
+            const gradient = (1 - distance / cohesion) / cohesion;
+            const push = excessDensity * PRESSURE_STIFFNESS * gradient * dt * dt;
+            particle.x -= unitX * push * 0.5;
+            particle.y -= unitY * push * 0.5;
+            other.x += unitX * push * 0.5;
+            other.y += unitY * push * 0.5;
           }
 
-          // Short-range contact plus longer-range surface tension. The
-          // attraction reaches across a few particles, which lets a drop
-          // keep a rounded meniscus while its neck becomes one particle wide.
-          let f = 0;
-          if (d < rep) {
-            f = -(rep - d) * 0.62;
-          } else {
-            f = (d - rep) * 0.035;
-          }
-          if (f) {
-            f = Math.max(-r * 0.55, Math.min(r * 0.14, f));
-            a.x += ux * f * 0.5; a.y += uy * f * 0.5;
-            q.x -= ux * f * 0.5; q.y -= uy * f * 0.5;
-          }
+          let force = distance < repulsion
+            ? -(repulsion - distance) * 0.62
+            : (distance - repulsion) * 0.035 * cohesionScale;
+          force = clamp(force, -radius * 0.55, radius * 0.14);
+          particle.x += unitX * force * 0.5;
+          particle.y += unitY * force * 0.5;
+          other.x -= unitX * force * 0.5;
+          other.y -= unitY * force * 0.5;
 
-          // Mutual viscous drag is applied as a force, not by assigning a
-          // target velocity. It damps ripples inside a blob but preserves the
-          // tangential motion needed to slide along the tray.
-          const avx = (a.x - a.px) / dt, avy = (a.y - a.py) / dt;
-          const qvx = (q.x - q.px) / dt, qvy = (q.y - q.py) / dt;
-          const shear = MUTUAL_VISCOSITY * Math.pow(1 - d / coh, 2) * dt * dt;
-          a.x += (qvx - avx) * shear * 0.5;
-          a.y += (qvy - avy) * shear * 0.5;
-          q.x -= (qvx - avx) * shear * 0.5;
-          q.y -= (qvy - avy) * shear * 0.5;
+          const particleVelocityX = (particle.x - particle.px) / dt;
+          const particleVelocityY = (particle.y - particle.py) / dt;
+          const otherVelocityX = (other.x - other.px) / dt;
+          const otherVelocityY = (other.y - other.py) / dt;
+          const shear = mutualViscosity * (1 - distance / cohesion) ** 2 * dt * dt;
+          particle.x += (otherVelocityX - particleVelocityX) * shear * 0.5;
+          particle.y += (otherVelocityY - particleVelocityY) * shear * 0.5;
+          other.x -= (otherVelocityX - particleVelocityX) * shear * 0.5;
+          other.y -= (otherVelocityY - particleVelocityY) * shear * 0.5;
         }
       }
     }
 
-    // collisions: walls, static segments, rotors
-    for (const wl of this.wheels) wl.step(dt);
-    for (const ss of this.seesaws) ss.step(dt);
-    const statics = this.level.segments;
-    for (const a of p) {
-      // sealed container walls (inset by the glass thickness) + depth clamp
-      const lo = this.inset + r;
-      if (a.x < lo) a.x = lo;
-      if (a.x > this.w - lo) a.x = this.w - lo;
-      if (a.y < lo) a.y = lo;
-      if (a.y > this.h - lo) a.y = this.h - lo;
-      const zLim = this.depth / 2 - r;
-      if (a.z < -zLim) { a.z = -zLim; a.pz = a.z; }
-      if (a.z > zLim) { a.z = zLim; a.pz = a.z; }
+    for (const wheel of this.wheels) wheel.step(dt);
+    this.applyGearLinks();
+    for (const seesaw of this.seesaws) seesaw.step(dt);
+    for (const gate of this.gates) gate.step(dt);
 
-      for (const s of statics) collideSeg(a, s, r, null, dt);
-      for (const wl of this.wheels) {
-        for (const s of wl.segments) {
-          if (collideSeg(a, s, r, wl, dt)) {
-            wl.applyWeight(a.x, a.y, g.x, g.y);
-          }
-        }
+    for (const particle of particles) {
+      const lowerBound = this.inset + radius;
+      particle.x = clamp(particle.x, lowerBound, this.w - lowerBound);
+      particle.y = clamp(particle.y, lowerBound, this.h - lowerBound);
+      const zLimit = this.depth / 2 - radius;
+      if (particle.z < -zLimit || particle.z > zLimit) {
+        particle.z = clamp(particle.z, -zLimit, zLimit);
+        particle.pz = particle.z;
       }
-      for (const ss of this.seesaws) {
-        for (const s of ss.segments) {
-          if (collideSeg(a, s, r, ss, dt)) {
-            ss.applyWeight(a.x, a.y, g.x, g.y);
-          }
-        }
+
+      for (const segment of this.level.segments) collideSegment(particle, segment, radius, null, dt);
+      for (const wheel of this.wheels) for (const segment of wheel.segments) {
+        if (collideSegment(particle, segment, radius, wheel, dt)) wheel.applyWeight(particle.x, particle.y, gravity.x, gravity.y);
       }
+      for (const seesaw of this.seesaws) for (const segment of seesaw.segments) {
+        if (collideSegment(particle, segment, radius, seesaw, dt)) seesaw.applyWeight(particle.x, particle.y, gravity.x, gravity.y);
+      }
+      for (const gate of this.gates) for (const segment of gate.segments) {
+        if (collideSegment(particle, segment, radius, gate, dt)) gate.applyWeight(particle.x, particle.y, gravity.x, gravity.y);
+      }
+    }
+  }
+
+  applyGearLinks() {
+    const byId = new Map(this.wheels.map(wheel => [wheel.id, wheel]));
+    for (const link of this.scene.mechanisms?.gearLinks || []) {
+      const a = byId.get(link.a);
+      const b = byId.get(link.b);
+      if (!a || !b) continue;
+      const direction = link.direction ?? -1;
+      const ratio = link.ratio ?? 1;
+      const coupling = link.coupling ?? 0.2;
+      const targetB = a.omega * ratio * direction;
+      b.omega += (targetB - b.omega) * coupling;
+      const targetA = b.omega / (ratio * direction || 1);
+      a.omega += (targetA - a.omega) * coupling * 0.25;
     }
   }
 }
 
-// Push particle out of a capsule around segment s; returns true on contact.
-// If rotor is given, transfer impulse to it and drag particle with its surface.
-function collideSeg(a, s, r, rotor, dt) {
-  const pad = r + 3;
-  // closest point on segment
-  let t = ((a.x - s.x1) * s.dx + (a.y - s.y1) * s.dy) / (s.len * s.len);
-  t = t < 0 ? 0 : t > 1 ? 1 : t;
-  const qx = s.x1 + s.dx * t, qy = s.y1 + s.dy * t;
-  let dx = a.x - qx, dy = a.y - qy;
-  const d2 = dx * dx + dy * dy;
-  if (d2 >= pad * pad) return false;
-  const d = Math.sqrt(d2) || 1e-6;
-  const push = pad - d;
-  const ux = dx / d, uy = dy / d;
-  a.x += ux * push;
-  a.y += uy * push;
-  // remove inward normal velocity (keep tangential -> slides along surface)
-  const vx = a.x - a.px, vy = a.y - a.py;
-  const vn = vx * ux + vy * uy;
-  if (vn < 0) {
-    // tangential friction + slight normal restitution: beads sit on surfaces
-    // instead of wetting/smearing along them (large contact angle)
-    a.px = a.x - (vx - vn * ux) * 0.95 + vn * ux * 0.25;
-    a.py = a.y - (vy - vn * uy) * 0.95 + vn * uy * 0.25;
-    if (rotor) rotor.applyImpulse(a.x, a.y, -vn * ux, -vn * uy);
+function collideSegment(particle, segment, radius, rotor, dt) {
+  const padding = radius + 3;
+  let t = ((particle.x - segment.x1) * segment.dx + (particle.y - segment.y1) * segment.dy) / (segment.len * segment.len);
+  t = clamp(t, 0, 1);
+  const closestX = segment.x1 + segment.dx * t;
+  const closestY = segment.y1 + segment.dy * t;
+  const dx = particle.x - closestX;
+  const dy = particle.y - closestY;
+  const distanceSquared = dx * dx + dy * dy;
+  if (distanceSquared >= padding * padding) return false;
+  const distance = Math.sqrt(distanceSquared) || 1e-6;
+  const push = padding - distance;
+  const unitX = dx / distance;
+  const unitY = dy / distance;
+  particle.x += unitX * push;
+  particle.y += unitY * push;
+  const velocityX = particle.x - particle.px;
+  const velocityY = particle.y - particle.py;
+  const normalVelocity = velocityX * unitX + velocityY * unitY;
+  if (normalVelocity < 0) {
+    particle.px = particle.x - (velocityX - normalVelocity * unitX) * 0.95 + normalVelocity * unitX * 0.25;
+    particle.py = particle.y - (velocityY - normalVelocity * unitY) * 0.95 + normalVelocity * unitY * 0.25;
+    if (rotor) rotor.applyImpulse(particle.x, particle.y, -normalVelocity * unitX, -normalVelocity * unitY);
   }
   if (rotor) {
-    // drag particle with the moving surface a little
-    const sv = rotor.surfaceVel(a.x, a.y);
-    a.px -= sv.x * dt * 0.5;
-    a.py -= sv.y * dt * 0.5;
+    const surface = rotor.surfaceVel(particle.x, particle.y);
+    particle.px -= surface.x * dt * 0.5;
+    particle.py -= surface.y * dt * 0.5;
   }
   return true;
 }
