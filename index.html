@@ -4,27 +4,56 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#0b1020">
+<meta name="description" content="比重の異なる流体が段差・歯車・弁を通って流れる、反転して繰り返し遊べるLiquid Motion玩具。">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Liquid Motion Toy</title>
 <link rel="stylesheet" href="./css/style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%2337d5ff'/%3E%3C/svg%3E">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
 </head>
 <body>
-<canvas id="view"></canvas>
+<canvas id="view" tabindex="0" aria-label="Liquid Motionの流体玩具。ダブルタップまたはFキーで反転します。">
+  お使いのブラウザはCanvasに対応していません。
+</canvas>
+<p id="canvasFallback" role="alert" hidden>Canvas 2Dに対応したブラウザで開いてください。</p>
 
-<div id="hud">
-  <button id="flipBtn" title="容器を反転">⟳ 反転</button>
-  <button id="resetBtn" title="ステージを再生成">✦ リセット</button>
-  <div id="tiltInfo"></div>
+<div id="hud" aria-label="Liquid Motion操作パネル">
+  <div class="control-row primary-controls">
+    <label class="select-control">
+      <span>シーン</span>
+      <select id="sceneSelect" aria-label="シーンを選択"></select>
+    </label>
+    <button id="playBtn" type="button" title="再生・一時停止（Space / P）">⏸ 一時停止</button>
+    <button id="flipBtn" type="button" title="容器を反転（F）">⟳ 反転</button>
+    <button id="resetBtn" type="button" title="同じシーンとseedで初期状態に戻す（R）">✦ リセット</button>
+  </div>
+  <div class="control-row secondary-controls">
+    <label class="select-control compact">
+      <span>速度</span>
+      <select id="speedSelect" aria-label="再生速度">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+      </select>
+    </label>
+    <button id="sensorBtn" type="button" aria-pressed="true">傾き ON</button>
+    <button id="shareBtn" type="button">共有</button>
+    <button id="exportBtn" type="button">JSON</button>
+    <output id="status" role="status" aria-live="polite"></output>
+  </div>
 </div>
 
 <div id="startOverlay">
   <div class="panel">
     <h1>Liquid Motion Toy</h1>
-    <p>端末を傾けると重力が変わり、液滴が段差や歯車、シーソーを通って流れます。ステージは毎回自動生成されます。ひっくり返すと砂時計のように再開します。</p>
-    <button id="startBtn">タップして開始</button>
+    <p>固定シーンを反転し、液滴が段差・歯車・弁を通る動きを眺めます。端末の傾きが使えない場合も、反転ボタンとキーボードで遊べます。</p>
+    <button id="startBtn" type="button">タップして開始</button>
+    <p class="shortcut-help">Space: 一時停止 / F: 反転 / R: リセット / 1–3: 速度</p>
   </div>
 </div>
 
+<noscript>このアプリの実行にはJavaScriptが必要です。</noscript>
 <script type="module" src="./js/main.js"></script>
 </body>
 </html>
