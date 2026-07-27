@@ -37,7 +37,6 @@ let fluid;
 let rotation = 0;
 let flipAnimation = null;
 let resumeAfterVisibility = false;
-let settledFor = 0;
 
 for (const item of SCENES) {
   const option = document.createElement('option');
@@ -60,8 +59,16 @@ const stateLabels = {
 const controller = new SimulationController(updateUi);
 
 function updateUi(snapshot = controller.snapshot()) {
-  playBtn.textContent = snapshot.state === SIMULATION_STATES.PAUSED ? '▶ 再生' : '⏸ 一時停止';
-  playBtn.setAttribute('aria-pressed', snapshot.state === SIMULATION_STATES.PAUSED ? 'true' : 'false');
+  const resumable = [SIMULATION_STATES.PAUSED, SIMULATION_STATES.SETTLED].includes(snapshot.state);
+  const busy = [SIMULATION_STATES.FLIPPING, SIMULATION_STATES.RESETTING].includes(snapshot.state);
+  playBtn.textContent = resumable ? '▶ 再生' : '⏸ 一時停止';
+  playBtn.setAttribute('aria-pressed', String(resumable));
+  playBtn.disabled = busy;
+  flipBtn.disabled = busy;
+  resetBtn.disabled = busy;
+  sceneSelect.disabled = busy;
+  speedSelect.disabled = busy;
+  sensorBtn.disabled = busy;
   speedSelect.value = String(snapshot.speed);
   sensorBtn.textContent = orientation.sensorEnabled ? '傾き ON' : '傾き OFF';
   sensorBtn.setAttribute('aria-pressed', String(orientation.sensorEnabled));
@@ -76,6 +83,7 @@ function size() {
   renderer.resize(width, height, dpr);
   if (!fluid) fluid = new Fluid(width, height, scene);
   else fluid.resize(width, height);
+  window.__fluid = fluid;
   window.__liquidMotion = { fluid, controller, scene };
 }
 size();
@@ -99,7 +107,7 @@ function easeInOutCubic(value) {
 
 function completeFlip() {
   if (!flipAnimation) return;
-  rotation = flipAnimation.to;
+  rotation = ((flipAnimation.to % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   renderer.setRotation(rotation);
   orientation.commitFlip();
   flipAnimation = null;
@@ -131,10 +139,6 @@ function loop(now) {
       steps++;
     }
     if (steps === 8) accumulator = 0;
-
-    const energy = fluid.motionEnergy();
-    settledFor = energy < 0.015 ? settledFor + frameSeconds : 0;
-    if (settledFor > 2 && Math.hypot(gravity.x, gravity.y) < 80) controller.settle();
   } else {
     accumulator = 0;
   }
@@ -182,15 +186,17 @@ function commandFlip() {
 
 function resetCurrentScene() {
   if (!controller.beginReset()) return;
+  flipAnimation = null;
   fluid.reset(scene);
   rotation = 0;
   renderer.setRotation(0);
   orientation.reset();
-  settledFor = 0;
   controller.finishReset();
 }
 
 function loadScene(nextScene) {
+  if ([SIMULATION_STATES.FLIPPING, SIMULATION_STATES.RESETTING].includes(controller.state)) return;
+  flipAnimation = null;
   scene = cloneScene(nextScene, nextScene.seed);
   localStorage.setItem('liquid-motion.scene', scene.id);
   fluid.reset(scene);
@@ -198,6 +204,8 @@ function loadScene(nextScene) {
   renderer.setRotation(0);
   orientation.reset();
   controller.start();
+  window.__fluid = fluid;
+  window.__liquidMotion = { fluid, controller, scene };
   updateShareUrl();
   updateUi();
 }
