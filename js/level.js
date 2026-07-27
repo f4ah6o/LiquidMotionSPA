@@ -1,52 +1,52 @@
-// Procedural level geometry, regenerated on every buildLevel() call.
-// The vessel keeps its hourglass structure: a top and bottom reservoir tray,
-// each pierced by plain gaps (pure geometry — no valves or throttling; flow
-// through a gap emerges from gravity, particle repulsion and cohesion alone).
-// Everything below the top tray — cascade ramps (段差), gear wheels (歯車)
-// and seesaws (シーソー) — is randomly generated. The whole layout is
-// point-symmetric ((x,y) → (w-x, h-y)) so it plays the same after a 180° flip.
+const WALL_INSET_FRAC = 0.015;
+const TRAY_GRADE = 0.09;
 
-const WALL_INSET_FRAC = 0.015; // sealed glass wall thickness (of min(w,h))
-const TRAY_GRADE = 0.09;       // constant tray grade toward the drip nozzle
+const scaleSegment = (segment, w, h) => [
+  segment.x1 * w,
+  segment.y1 * h,
+  segment.x2 * w,
+  segment.y2 * h,
+];
 
-const rand = (a, b) => a + Math.random() * (b - a);
-const randInt = (a, b) => Math.floor(rand(a, b + 1));
+function mirrorSegment([x1, y1, x2, y2], w, h) {
+  return [w - x1, h - y1, w - x2, h - y2];
+}
 
-export function buildLevel(w, h) {
+function addConfiguredSegments(target, specs, w, h) {
+  for (const spec of specs || []) {
+    const segment = scaleSegment(spec, w, h);
+    target.push(segment);
+    if (spec.mirror) target.push(mirrorSegment(segment, w, h));
+  }
+}
+
+function normalizeDynamic(spec, w, h, m) {
+  return {
+    ...spec,
+    x: spec.x * w,
+    y: spec.y * h,
+    r: spec.r === undefined ? undefined : spec.r * m,
+    half: spec.half === undefined ? undefined : spec.half * m,
+  };
+}
+
+export function buildLevel(w, h, scene, rng) {
   const m = Math.min(w, h);
-  const r = Math.max(4, m * 0.014); // particle radius (matches physics.js)
-  const segs = [];
+  const particleRadius = Math.max(4, m * 0.014);
+  const random = rng || Math.random;
+  const rand = (a, b) => a + random() * (b - a);
+  const randInt = (a, b) => Math.floor(rand(a, b + 1));
+  const segmentsRaw = [];
+  const layout = scene?.layout || { mode: 'procedural' };
 
-  // --- top tray: ONE monotonic incline spanning the full width, with two
-  // nozzle gaps cut into it (bottom tray is the point mirror). ROLES (see
-  // CLAUDE.md): the CATCH nozzle sits near the HIGH end and only receives
-  // the stream falling from the other tray's drip after a flip; the DRIP
-  // nozzle sits near the LOW end and is the only outlet — resting liquid
-  // always slides down the incline away from the catch and out the drip.
-  // The point mirror inverts high/low, so the same tray works in both
-  // orientations. Placing the gaps at xCatch = w - xDrip keeps the bottom
-  // drip in the same column as the top catch for the hourglass loop.
   const spoutLen = rand(0.035, 0.05) * h;
-  // A drip nozzle is a narrow edge opening, not a long tube. The opening is
-  // only about 3 particle radii wide on each side at the tray plane: enough
-  // room for a particle-sized neck to pass the rounded edge and glass frame,
-  // while still narrow enough for gravity and surface tension to pinch it
-  // into a drop.
-  // The old 4.5..6 particle-radius half-width behaved like an open chute and
-  // made a continuous stream. Keep the gap at the low wall so there is no
-  // shelf, while accounting for the glass-wall collision radius.
-  const dripHalfW = Math.max(3.0 * r, rand(0.026, 0.034) * m);
-  // The catch remains wider than the drip so a falling drop can land without
-  // changing the drip's capillary geometry.
-  const catchHalfW = Math.max(2.4 * r, dripHalfW * 1.8);
-  const highOnLeft = Math.random() < 0.5;
-  // the drip gap runs (almost) flush to the low wall — a ledge between the
-  // gap and the wall would trap liquid, breaking the monotonic drain
-  const sliver = rand(0.2, 0.6) * r;
+  const dripHalfW = Math.max(3 * particleRadius, rand(0.026, 0.034) * m);
+  const catchHalfW = Math.max(2.4 * particleRadius, dripHalfW * 1.8);
+  const highOnLeft = layout.highOnLeft ?? (random() < 0.5);
+  const sliver = rand(0.2, 0.6) * particleRadius;
   const xDrip = highOnLeft ? w - dripHalfW - sliver : dripHalfW + sliver;
-  const xCatch = w - xDrip; // high side, flush to the opposite wall
+  const xCatch = w - xDrip;
   const yHigh = rand(0.06, 0.09) * h;
-  // cap the total drop so wide (landscape) vessels keep a shallow tray
   const grade = Math.min(TRAY_GRADE, 0.09 * h / w);
   const trayAt = x => yHigh + (highOnLeft ? x : w - x) * grade;
   const gaps = [
@@ -54,105 +54,99 @@ export function buildLevel(w, h) {
     { x: xCatch, halfW: catchHalfW },
   ].sort((a, b) => a.x - b.x);
 
-  const topSegs = [];
-  // collinear tray pieces along the incline, split by the two gaps
-  const edges = [0, ...gaps.flatMap(g => [g.x - g.halfW, g.x + g.halfW]), w];
+  const topSegments = [];
+  const edges = [0, ...gaps.flatMap(gap => [gap.x - gap.halfW, gap.x + gap.halfW]), w];
   for (let i = 0; i < edges.length; i += 2) {
-    const x1 = edges[i], x2 = edges[i + 1];
-    if (x2 - x1 < 3 * r) continue; // drop wall-side slivers: gap meets wall
-    topSegs.push([x1, trayAt(x1), x2, trayAt(x2)]);
+    const x1 = edges[i];
+    const x2 = edges[i + 1];
+    if (x2 - x1 >= 3 * particleRadius) topSegments.push([x1, trayAt(x1), x2, trayAt(x2)]);
   }
-  // nozzle walls: ONLY the catch gets walls — two, STANDING INTO the
-  // reservoir — a raised rim that keeps reservoir liquid out of the catch.
-  // The drip has no walls (the incline leads straight into the hole), so
-  // the tray's underside — the receiving face once flipped — is perfectly
-  // smooth and the arriving stream can never snag on its way to the catch.
   for (const x of [xCatch - catchHalfW, xCatch + catchHalfW]) {
-    if (x <= 0 || x >= w) continue; // outer edge may coincide with the wall
-    topSegs.push([x, trayAt(x), x, trayAt(x) - spoutLen]);
+    if (x > 0 && x < w) topSegments.push([x, trayAt(x), x, trayAt(x) - spoutLen]);
   }
-  segs.push(...topSegs);
-  // bottom reservoir: point-symmetric mirror
-  segs.push(...topSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
+  segmentsRaw.push(...topSegments, ...topSegments.map(segment => mirrorSegment(segment, w, h)));
 
-  // --- cascade ramps (段差) in the upper mid band, mirrored below ---
-  const nRamps = randInt(2, 3); // ×2 by mirroring → 4..6 total
-  const yTop = 0.20 * h, yBot = 0.48 * h;
-  const rampSegs = [];
-  for (let i = 0; i < nRamps; i++) {
-    const y = yTop + ((i + rand(0.2, 0.8)) / nRamps) * (yBot - yTop);
-    const len = rand(0.2, 0.34) * w;
-    const x1 = rand(0.06, 0.94 - len / w) * w;
-    const tilt = rand(0.04, 0.08) * h * (i % 2 ? -1 : 1);
-    rampSegs.push([x1, y - tilt / 2, x1 + len, y + tilt / 2]);
-  }
-  segs.push(...rampSegs);
-  segs.push(...rampSegs.map(([x1, y1, x2, y2]) => [w - x1, h - y1, w - x2, h - y2]));
+  let wheels = [];
+  let seesaws = [];
+  let gates = [];
 
-  const segments = segs.map(([x1, y1, x2, y2]) => makeSeg(x1, y1, x2, y2));
-
-  // --- rotors: 1..2 gear wheels, 1..2 seesaws, placed without overlaps ---
-  const wheels = [], seesaws = [];
-  const placed = []; // {x, y, rad} keep-out circles
-  const clear = (x, y, rad) => {
-    const pad = rad + 3.5 * r;
-    if (x < pad || x > w - pad || y < 0.16 * h + pad || y > 0.84 * h - pad) return false;
-    if (placed.some(o => Math.hypot(o.x - x, o.y - y) < o.rad + pad)) return false;
-    return segments.every(s => segDist(s, x, y) > pad);
-  };
-  const place = (rad, xHint) => {
-    for (let t = 0; t < 80; t++) {
-      const x = xHint !== undefined && t < 30
-        ? xHint + rand(-0.08, 0.08) * w
-        : rand(0.12, 0.88) * w;
-      const y = rand(0.2, 0.8) * h;
-      if (clear(x, y, rad)) {
-        placed.push({ x, y, rad });
-        return { x, y };
-      }
+  if (layout.mode === 'fixed') {
+    addConfiguredSegments(segmentsRaw, layout.ramps, w, h);
+    wheels = (layout.wheels || []).map(spec => normalizeDynamic(spec, w, h, m));
+    seesaws = (layout.seesaws || []).map(spec => normalizeDynamic(spec, w, h, m));
+    gates = (layout.gates || []).map(spec => normalizeDynamic(spec, w, h, m));
+  } else {
+    const rampSegments = [];
+    const count = randInt(2, 3);
+    const yTop = 0.2 * h;
+    const yBottom = 0.48 * h;
+    for (let i = 0; i < count; i++) {
+      const y = yTop + ((i + rand(0.2, 0.8)) / count) * (yBottom - yTop);
+      const length = rand(0.2, 0.34) * w;
+      const x1 = rand(0.06, 0.94 - length / w) * w;
+      const tilt = rand(0.04, 0.08) * h * (i % 2 ? -1 : 1);
+      rampSegments.push([x1, y - tilt / 2, x1 + length, y + tilt / 2]);
     }
-    return null;
-  };
+    segmentsRaw.push(...rampSegments, ...rampSegments.map(segment => mirrorSegment(segment, w, h)));
 
-  // first wheel aims for the fall path under a top gap
-  const nWheels = randInt(1, 2), nSeesaws = randInt(1, 2);
-  for (let i = 0; i < nWheels; i++) {
-    const rad = rand(0.07, 0.11) * m;
-    const at = place(rad * 1.15, i === 0 ? gaps[0].x : undefined);
-    if (at) wheels.push({ x: at.x, y: at.y, r: rad });
-  }
-  for (let i = 0; i < nSeesaws; i++) {
-    const half = rand(0.10, 0.15) * m;
-    const at = place(half, i === 0 && gaps.length > 1 ? gaps[1].x : undefined);
-    if (at) seesaws.push({ x: at.x, y: at.y, half });
+    const segments = segmentsRaw.map(segment => makeSeg(...segment));
+    const placed = [];
+    const clear = (x, y, radius) => {
+      const pad = radius + 3.5 * particleRadius;
+      if (x < pad || x > w - pad || y < 0.16 * h + pad || y > 0.84 * h - pad) return false;
+      if (placed.some(item => Math.hypot(item.x - x, item.y - y) < item.radius + pad)) return false;
+      return segments.every(segment => segmentDistance(segment, x, y) > pad);
+    };
+    const place = (radius, xHint) => {
+      for (let attempt = 0; attempt < 80; attempt++) {
+        const x = xHint !== undefined && attempt < 30
+          ? xHint + rand(-0.08, 0.08) * w
+          : rand(0.12, 0.88) * w;
+        const y = rand(0.2, 0.8) * h;
+        if (clear(x, y, radius)) {
+          placed.push({ x, y, radius });
+          return { x, y };
+        }
+      }
+      return null;
+    };
+
+    for (let i = 0; i < randInt(1, 2); i++) {
+      const radius = rand(0.07, 0.11) * m;
+      const point = place(radius * 1.15, i === 0 ? gaps[0].x : undefined);
+      if (point) wheels.push({ id: `random-wheel-${i}`, x: point.x, y: point.y, r: radius });
+    }
+    for (let i = 0; i < randInt(1, 2); i++) {
+      const half = rand(0.1, 0.15) * m;
+      const point = place(half, i === 0 ? gaps[1].x : undefined);
+      if (point) seesaws.push({ id: `random-seesaw-${i}`, x: point.x, y: point.y, half });
+    }
   }
 
-  // where the liquid may start: the drip side of the catch rim, so nothing
-  // spawns over (or behind) the catch gap
   const spawnX = highOnLeft
-    ? [xCatch + catchHalfW + 3 * r, 0.95 * w]
-    : [0.05 * w, xCatch - catchHalfW - 3 * r];
+    ? [xCatch + catchHalfW + 3 * particleRadius, 0.95 * w]
+    : [0.05 * w, xCatch - catchHalfW - 3 * particleRadius];
 
   return {
-    segments,
+    segments: segmentsRaw.map(segment => makeSeg(...segment)),
     wheels,
     seesaws,
+    gates,
     spawnX,
-    // sealed vessel: glass wall thickness; physics clamps particles inside
-    // it and the renderer draws the frame at this width
     inset: m * WALL_INSET_FRAC,
+    seed: scene?.seed,
   };
 }
 
-// distance from point to segment
-function segDist(s, x, y) {
-  let t = ((x - s.x1) * s.dx + (y - s.y1) * s.dy) / (s.len * s.len);
-  t = t < 0 ? 0 : t > 1 ? 1 : t;
-  return Math.hypot(x - (s.x1 + s.dx * t), y - (s.y1 + s.dy * t));
+function segmentDistance(segment, x, y) {
+  let t = ((x - segment.x1) * segment.dx + (y - segment.y1) * segment.dy) / (segment.len * segment.len);
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(x - (segment.x1 + segment.dx * t), y - (segment.y1 + segment.dy * t));
 }
 
 export function makeSeg(x1, y1, x2, y2) {
-  const dx = x2 - x1, dy = y2 - y1;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
   const len = Math.hypot(dx, dy) || 1;
   return { x1, y1, x2, y2, dx, dy, len, nx: -dy / len, ny: dx / len };
 }
