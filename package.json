@@ -1,0 +1,9 @@
+{
+  "name": "liquid-motion-spa",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check js/main.js && node --check js/physics.js && node --check js/renderer.js"
+  }
+}
