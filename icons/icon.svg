@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Liquid Motion">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111b45"/>
+      <stop offset="1" stop-color="#071020"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7cf2c0"/>
+      <stop offset="1" stop-color="#37d5ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M256 72c-42 72-116 150-116 245 0 68 52 123 116 123s116-55 116-123c0-95-74-173-116-245z" fill="url(#drop)"/>
+  <circle cx="220" cy="250" r="34" fill="#fff" opacity=".28"/>
+  <path d="M142 158h228M142 354h228" stroke="#dff8ff" stroke-width="20" stroke-linecap="round" opacity=".7"/>
+</svg>
