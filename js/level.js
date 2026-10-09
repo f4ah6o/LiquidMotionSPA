@@ -76,16 +76,60 @@ export function buildLevel(w, h, scene, rng) {
     seesaws = (layout.seesaws || []).map(spec => normalizeDynamic(spec, w, h, m));
     gates = (layout.gates || []).map(spec => normalizeDynamic(spec, w, h, m));
   } else {
-    const rampSegments = [];
-    const count = randInt(2, 3);
     const yTop = 0.2 * h;
     const yBottom = 0.48 * h;
+
+    // --- zigzag staircase (階段) under the drip column, mirrored below ---
+    // the signature piece of the real toy: short, nearly level steps offset
+    // alternately, so falling beads land on a step, creep to its lip and drip
+    // to the next one — pacing emerges from step tilt and surface friction
+    const stairSegments = [];
+    {
+      const nSteps = randInt(4, 7);
+      const stepLen = rand(0.10, 0.16) * w;
+      const dropY = (yBottom - yTop) / nSteps; // vertical gap between steps
+      const stepTilt = rand(0.010, 0.020) * h; // gentle grade toward the lip
+      // zigzag direction: first step carries the drip stream inward. The
+      // drip gap is flush to the wall, so its stream falls along the wall —
+      // the first step's back edge must reach the wall to catch it.
+      let dir = xDrip < w / 2 ? 1 : -1;
+      let xLip = xDrip + dir * stepLen * rand(0.9, 1.1);
+      for (let i = 0; i < nSteps; i++) {
+        const y = yTop + (i + 0.5) * dropY;
+        let xBack = xLip - dir * stepLen;
+        // clamp the back edge to the wall (a slightly long first tread is
+        // fine); if the lip itself runs out of room, turn the zigzag around
+        xBack = Math.max(0.02 * w, Math.min(0.98 * w, xBack));
+        if (xLip < 0.06 * w || xLip > 0.94 * w) {
+          dir = -dir;
+          xLip = xBack + dir * stepLen;
+        }
+        stairSegments.push([xBack, y - stepTilt, xLip, y]);
+        // next step: reversed, its lip roughly half a step back past this
+        // one, so the drop from this lip lands on the next tread — slightly
+        // asymmetric so the staircase marches diagonally across the vessel
+        // like the real toy's, instead of hugging one wall
+        dir = -dir;
+        const toCenter = (w / 2 - xLip) * dir > 0;
+        xLip = xLip + dir * stepLen * (toCenter ? rand(0.6, 0.75) : rand(0.35, 0.5));
+      }
+    }
+    segmentsRaw.push(...stairSegments, ...stairSegments.map(segment => mirrorSegment(segment, w, h)));
+
+    // --- a ramp or two (段差) elsewhere in the mid band, mirrored below ---
+    const rampSegments = [];
+    const count = randInt(0, 1); // ×2 by mirroring — the stairs are the star
     for (let i = 0; i < count; i++) {
-      const y = yTop + ((i + rand(0.2, 0.8)) / count) * (yBottom - yTop);
+      const y = yTop + rand(0.2, 0.8) * (yBottom - yTop);
       const length = rand(0.2, 0.34) * w;
       const x1 = rand(0.06, 0.94 - length / w) * w;
       const tilt = rand(0.04, 0.08) * h * (i % 2 ? -1 : 1);
-      rampSegments.push([x1, y - tilt / 2, x1 + length, y + tilt / 2]);
+      const segment = [x1, y - tilt / 2, x1 + length, y + tilt / 2];
+      // don't cut through the staircase column
+      const nearStairs = stairSegments.some(([sx1, , sx2]) =>
+        Math.min(x1, x1 + length) < Math.max(sx1, sx2) + 0.05 * w &&
+        Math.max(x1, x1 + length) > Math.min(sx1, sx2) - 0.05 * w);
+      if (!nearStairs) rampSegments.push(segment);
     }
     segmentsRaw.push(...rampSegments, ...rampSegments.map(segment => mirrorSegment(segment, w, h)));
 
